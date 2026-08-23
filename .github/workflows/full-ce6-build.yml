@@ -47,6 +47,15 @@ jobs:
           echo "wince-source=$(git -C wince-source rev-parse HEAD)" | tee revisions.txt
           echo "wince-build=$(git -C wince-build rev-parse HEAD)" | tee -a revisions.txt
 
+      - name: Enforce clean-room source boundary
+        working-directory: wince-build
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 scripts/check_cleanroom_provenance.py .
+          test -f docs/CLEANROOM.md
+          test -f docs/PROVENANCE.md
+
       - name: Free disposable runner disk
         shell: bash
         run: |
@@ -130,17 +139,17 @@ jobs:
               exit 2
             fi
           else
-            # A workflow-file push is only a wiring check; it must not pretend to be a full OS build.
             echo 'Full CE6 build requires workflow_dispatch inputs.'
             exit 2
           fi
           set -o pipefail
           "$ENGINE" "${ARGS[@]}" 2>&1 | tee full-ce6-build.log
           test -s full-ce6-out/build.ninja
-          test -s full-ce6-out/sysgen/merged.bib
-          test -s full-ce6-out/sysgen/ceconfig.h
-          test -s full-ce6-out/NK.BIN
-          sha256sum full-ce6-out/NK.BIN | tee nkbin.sha256
+          test -s full-ce6-out/merged.bib
+          test -s full-ce6-out/release/default.hv
+          test -s full-ce6-out/release/merged.reg
+          test -s full-ce6-out/release/NK.BIN
+          sha256sum full-ce6-out/release/NK.BIN | tee nkbin.sha256
 
       - name: Upload compact diagnostics and final image
         if: always()
@@ -153,7 +162,7 @@ jobs:
             wcebuild-build.log
             full-ce6-build.log
             nkbin.sha256
-            full-ce6-out/NK.BIN
+            full-ce6-out/release/NK.BIN
           if-no-files-found: ignore
           retention-days: 14
           compression-level: 6
