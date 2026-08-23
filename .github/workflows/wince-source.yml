@@ -1,0 +1,22 @@
+name: wince-source
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  source:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          repository: kagurasumusun/wince-source
+          ref: main
+          token: ${{ secrets.WINCE_REPO_PAT }}
+          fetch-depth: 1
+      - name: Verify source tree
+        run: |
+          test -f scripts/ce6_extract.py
+          python3 --version
