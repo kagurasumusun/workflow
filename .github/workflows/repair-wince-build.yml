@@ -99,3 +99,5 @@ jobs:
           fi
           git commit -m 'fix: harden full-build outputs and graph input handling'
           git -c http.extraheader="AUTHORIZATION: bearer ${WINCE_REPO_PAT}" push origin HEAD:main
+
+# current-main build/test trigger
