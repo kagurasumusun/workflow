@@ -49,8 +49,13 @@ jobs:
           git clone --depth 1 --branch main https://github.com/kagurasumusun/wince-source.git wince-source
           git clone --depth 1 --branch main https://github.com/kagurasumusun/wince-build.git wince-build
           unset GIT_CONFIG_VALUE_0 GIT_CONFIG_KEY_0 GIT_CONFIG_COUNT
-          echo "wince-source=$(git -C wince-source rev-parse HEAD)" | tee revisions.txt
-          echo "wince-build=$(git -C wince-build rev-parse HEAD)" | tee -a revisions.txt
+          BUILD_SHA="$(git -C wince-build rev-parse HEAD)"
+          SOURCE_SHA="$(git -C wince-source rev-parse HEAD)"
+          echo "wince-source=$SOURCE_SHA" | tee revisions.txt
+          echo "wince-build=$BUILD_SHA" | tee -a revisions.txt
+          git -C wince-build show -s --format='%H %s' "$BUILD_SHA" | tee -a revisions.txt
+          grep -n 'CE e32_rom must be 106 bytes' wince-build/engine/include/wce/romimage.hpp
+          grep -n 'kernel_dll_address' wince-build/engine/include/wce/romimage.hpp
 
       - name: Free disposable runner disk
         shell: bash
