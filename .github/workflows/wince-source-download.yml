@@ -1,0 +1,33 @@
+name: wince-source-download
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  download:
+    strategy:
+      fail-fast: false
+      max-parallel: 3
+      matrix:
+        name: [base, r2, r3]
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          repository: kagurasumusun/wince-source
+          ref: main
+          token: ${{ secrets.WINCE_REPO_PAT }}
+          fetch-depth: 1
+      - name: Download CE6 media
+        run: python3 scripts/ce6_extract.py download -o isos
+      - name: Record media checksums
+        run: sha256sum isos/*.iso | tee sha256.txt
+      - name: Upload manifest only
+        uses: actions/upload-artifact@v4
+        with:
+          name: ce6-download-manifest-${{ matrix.name }}-${{ github.run_id }}
+          path: sha256.txt
+          retention-days: 7
