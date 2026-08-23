@@ -10,26 +10,39 @@ jobs:
   source:
     runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v4
-        with:
-          repository: kagurasumusun/wince-source
-          ref: main
-          token: ${{ secrets.WINCE_REPO_PAT }}
-          fetch-depth: 1
+      - name: Clone private wince-source
+        shell: bash
+        env:
+          WINCE_REPO_PAT: ${{ secrets.WINCE_REPO_PAT }}
+        run: |
+          set -euo pipefail
+          test -n "$WINCE_REPO_PAT"
+          rm -rf wince-source
+          git clone --depth 1 --branch main "https://x-access-token:${WINCE_REPO_PAT}@github.com/kagurasumusun/wince-source.git" wince-source
+          cd wince-source
+          git rev-parse HEAD
+          test -f scripts/ce6_extract.py
+          test -f scripts/ce6_lowdisk_driver.py
+          test -f scripts/requirements.txt
 
       - name: Install extraction dependencies
+        working-directory: wince-source
         run: |
+          set -euo pipefail
           sudo apt-get update
           sudo apt-get install -y p7zip-full python3-pip
           python3 -m pip install --break-system-packages -r scripts/requirements.txt
 
       - name: Download and extract CE6 in one continuous runner job
+        working-directory: wince-source
+        shell: bash
         run: |
           set -euo pipefail
           rm -rf ce600 .ce6_media
           python3 scripts/ce6_lowdisk_driver.py -o ce600
 
       - name: Verify complete source tree
+        working-directory: wince-source
         run: |
           set -euo pipefail
           test -d ce600/PUBLIC
