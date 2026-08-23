@@ -121,3 +121,5 @@ jobs:
             wince-build/cl-version.log
           if-no-files-found: ignore
           retention-days: 14
+
+# CI wiring refresh 2026-08-23T16:41+09:00
