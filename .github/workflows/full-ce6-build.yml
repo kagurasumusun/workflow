@@ -72,43 +72,37 @@ jobs:
           python -m pip install ninja
           python -m pip install -r wince-source/scripts/requirements.txt
 
-      - name: Download CE6 media with native parallel downloader
+      - name: Download and extract CE6 media sequentially on one runner
         shell: bash
         run: |
           set -euxo pipefail
-          rm -rf ce6-media
-          mkdir -p ce6-media
-          download_iso() {
-            local name="$1"
-            local url="$2"
-            local out="ce6-media/$3"
+          rm -rf ce6-media ce600
+          mkdir -p ce6-media ce600
+          download_and_extract() {
+            local tag="$1"
+            local name="$2"
+            local url="$3"
+            local iso="ce6-media/$name"
             aria2c --continue=true --allow-overwrite=true --auto-file-renaming=false \
               --max-connection-per-server=16 --split=16 --min-split-size=4M \
               --max-concurrent-downloads=1 --file-allocation=none \
               --disk-cache=32M --timeout=30 --connect-timeout=15 \
               --max-tries=8 --retry-wait=3 --summary-interval=10 \
-              --console-log-level=warn --out="$(basename "$out")" \
-              "$url"
-            mv -f "$(basename "$out")" "$out"
-            test -s "$out"
-            echo "$name downloaded: $(du -h "$out" | cut -f1)"
+              --console-log-level=warn --out="$name" "$url"
+            mv -f "$name" "$iso"
+            test -s "$iso"
+            python3 wince-source/scripts/ce6_lowdisk_driver.py \
+              --iso "$tag=$iso" --scope all -o ce600
+            test -s ce600/manifest.json
+            rm -f "$iso"
+            df -h /
           }
-          download_iso base "https://archive.org/download/windows-ce-6/en_windows_embedded_ce_6.0_dvd.iso" en_windows_embedded_ce_6.0_dvd.iso
-          download_iso r2 "https://archive.org/download/windows-ce-6/CE6R2.iso" CE6R2.iso
-          download_iso r3 "https://archive.org/download/windows-ce-6/CE6R3.iso" CE6R3.iso
-          df -h /
-
-      - name: Extract and merge all CE6 media sequentially on one runner
-        shell: bash
-        run: |
-          set -euxo pipefail
-          rm -rf ce600
-          python3 wince-source/scripts/ce6_lowdisk_driver.py \
-            --base-iso ce6-media/en_windows_embedded_ce_6.0_dvd.iso \
-            --r2-iso ce6-media/CE6R2.iso \
-            --r3-iso ce6-media/CE6R3.iso \
-            --scope all -o ce600
-          test -f ce600/manifest.json
+          download_and_extract base en_windows_embedded_ce_6.0_dvd.iso \
+            https://archive.org/download/windows-ce-6/en_windows_embedded_ce_6.0_dvd.iso
+          download_and_extract r2 CE6R2.iso \
+            https://archive.org/download/windows-ce-6/CE6R2.iso
+          download_and_extract r3 CE6R3.iso \
+            https://archive.org/download/windows-ce-6/CE6R3.iso
           test -d ce600/PUBLIC
           test -d ce600/PRIVATE
           test -d ce600/PLATFORM
@@ -120,6 +114,7 @@ jobs:
           assert m.get('count', 0) > 100000, m.get('count')
           print('extracted files:', m['count'])
           PY
+          rm -rf ce6-media
           df -h /
 
       - name: Provision pinned ceGCC 0.59.1 / GCC 4.4.0
