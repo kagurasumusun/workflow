@@ -1,0 +1,139 @@
+name: full-ce6-build
+
+on:
+  workflow_dispatch:
+    inputs:
+      osdesign:
+        description: 'Optional path to a CE6 .pbxml OS Design inside wince-source checkout'
+        required: false
+        default: ''
+      sysgen_defaults:
+        description: 'Select catalog variables with DefaultValue=1 when no PBXML is provided'
+        required: false
+        type: boolean
+        default: true
+  push:
+    paths:
+      - '.github/workflows/full-ce6-build.yml'
+
+permissions:
+  contents: read
+
+# One runner owns the entire acquisition + extraction + build chain.
+# There is intentionally no concurrency group.
+jobs:
+  full-ce6:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 360
+    steps:
+      - name: Clone private repositories
+        shell: bash
+        env:
+          WINCE_REPO_PAT: ${{ secrets.WINCE_REPO_PAT }}
+        run: |
+          set -euo pipefail
+          test -n "$WINCE_REPO_PAT"
+          rm -rf wince-source wince-build
+          git -c http.extraheader="AUTHORIZATION: bearer ${WINCE_REPO_PAT}" clone --depth 1 --branch main https://github.com/kagurasumusun/wince-source.git wince-source
+          git -c http.extraheader="AUTHORIZATION: bearer ${WINCE_REPO_PAT}" clone --depth 1 --branch main https://github.com/kagurasumusun/wince-build.git wince-build
+          echo "wince-source=$(git -C wince-source rev-parse HEAD)"
+          echo "wince-build=$(git -C wince-build rev-parse HEAD)"
+
+      - name: Free runner disk reserved for preinstalled SDKs
+        shell: bash
+        run: |
+          set -euxo pipefail
+          sudo rm -rf /usr/local/lib/android /usr/local/share/powershell /opt/ghc \
+                      /usr/local/share/chromium /usr/local/lib/node_modules || true
+          df -h /
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install extraction/build dependencies
+        run: |
+          python -m pip install ninja
+          sudo apt-get update
+          sudo apt-get install -y p7zip-full patchelf python3-pip
+          python -m pip install -r wince-source/scripts/requirements.txt
+
+      - name: Download + extract CE6 sequentially on this runner
+        shell: bash
+        run: |
+          set -euo pipefail
+          rm -rf ce600
+          python3 wince-source/scripts/ce6_lowdisk_driver.py -o ce600
+          test -f ce600/manifest.json
+          test -d ce600/PUBLIC
+          test -d ce600/PRIVATE
+          test -d ce600/PLATFORM
+          python3 - <<'PY'
+          import json
+          with open('ce600/manifest.json', encoding='utf-8') as f:
+              m = json.load(f)
+          assert len(m.get('isos', [])) == 3, m.get('isos')
+          assert m.get('count', 0) > 100000, m.get('count')
+          print('extracted files:', m['count'])
+          PY
+          df -h /
+
+      - name: Provision pinned ceGCC 0.59.1 / GCC 4.4.0
+        shell: bash
+        working-directory: wince-build
+        run: |
+          set -euxo pipefail
+          chmod +x scripts/provision-cegcc.sh
+          scripts/provision-cegcc.sh "$RUNNER_TEMP/mingw32ce"
+          "$RUNNER_TEMP/mingw32ce/bin/arm-mingw32ce-gcc" --version | head -1
+          echo "WCE_CEGCC_DIR=$RUNNER_TEMP/mingw32ce/bin" >> "$GITHUB_ENV"
+
+      - name: Configure wcebuild engine
+        shell: bash
+        working-directory: wince-build
+        run: |
+          set -euxo pipefail
+          cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DWCE_CEGCC_DIR="$WCE_CEGCC_DIR"
+          test -x build/engine/wcefullbuild || test -x build/wcefullbuild || true
+
+      - name: Build wcebuild engine
+        shell: bash
+        working-directory: wince-build
+        run: |
+          set -o pipefail
+          cmake --build build --verbose 2>&1 | tee ../wcebuild-build.log
+
+      - name: Run full CE6 build through ROMIMAGE
+        shell: bash
+        env:
+          OSDESIGN_INPUT: ${{ inputs.osdesign }}
+          SYSGEN_DEFAULTS_INPUT: ${{ inputs.sysgen_defaults }}
+        run: |
+          set -euo pipefail
+          ENGINE="$(find wince-build/build -type f -name wcefullbuild -perm -111 | head -1)"
+          test -n "$ENGINE"
+          ARGS=(--root "$PWD/ce600" --out "$PWD/full-ce6-out" --toolchain cegcc --cpu ARMV4I)
+          if [ -n "$OSDESIGN_INPUT" ]; then
+            ARGS+=(--osdesign "$PWD/wince-source/$OSDESIGN_INPUT")
+          elif [ "$SYSGEN_DEFAULTS_INPUT" = "true" ]; then
+            ARGS+=(--sysgen-defaults)
+          else
+            echo "No PBXML and --sysgen-defaults=false; refusing an under-specified OS build." >&2
+            exit 2
+          fi
+          set -o pipefail
+          "$ENGINE" "${ARGS[@]}" 2>&1 | tee full-ce6-build.log
+          test -s full-ce6-out/build.ninja
+          test -s full-ce6-out/sysgen/merged.bib
+          test -s full-ce6-out/sysgen/ceconfig.h
+          test -s full-ce6-out/NK.XIP
+
+      - name: Upload compact full-build diagnostics
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: full-ce6-diagnostics-${{ github.run_id }}
+          path: |
+            wcebuild-build.log
+            full-ce6-build.log
+          retention-days: 14
+          compression-level: 6
