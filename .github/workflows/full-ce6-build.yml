@@ -46,8 +46,6 @@ jobs:
           export GIT_CONFIG_COUNT=1
           export GIT_CONFIG_KEY_0=credential.helper
           export GIT_CONFIG_VALUE_0='!f() { echo username=x-access-token; echo "password=$WINCE_REPO_PAT"; }; f'
-          git ls-remote --exit-code https://github.com/kagurasumusun/wince-source.git HEAD >/dev/null
-          git ls-remote --exit-code https://github.com/kagurasumusun/wince-build.git HEAD >/dev/null
           git clone --depth 1 --branch main https://github.com/kagurasumusun/wince-source.git wince-source
           git clone --depth 1 --branch main https://github.com/kagurasumusun/wince-build.git wince-build
           unset GIT_CONFIG_VALUE_0 GIT_CONFIG_KEY_0 GIT_CONFIG_COUNT
@@ -70,16 +68,46 @@ jobs:
         run: |
           set -euxo pipefail
           sudo apt-get update
-          sudo apt-get install -y p7zip-full patchelf python3-pip
+          sudo apt-get install -y aria2 p7zip-full patchelf python3-pip
           python -m pip install ninja
           python -m pip install -r wince-source/scripts/requirements.txt
 
-      - name: Download and extract all CE6 media sequentially on one runner
+      - name: Download CE6 media with native parallel downloader
+        shell: bash
+        run: |
+          set -euxo pipefail
+          rm -rf ce6-media
+          mkdir -p ce6-media
+          download_iso() {
+            local name="$1"
+            local url="$2"
+            local out="ce6-media/$3"
+            aria2c --continue=true --allow-overwrite=true --auto-file-renaming=false \
+              --max-connection-per-server=16 --split=16 --min-split-size=4M \
+              --max-concurrent-downloads=1 --file-allocation=none \
+              --disk-cache=32M --timeout=30 --connect-timeout=15 \
+              --max-tries=8 --retry-wait=3 --summary-interval=10 \
+              --console-log-level=warn --out="$(basename "$out")" \
+              "$url"
+            mv -f "$(basename "$out")" "$out"
+            test -s "$out"
+            echo "$name downloaded: $(du -h "$out" | cut -f1)"
+          }
+          download_iso base "https://archive.org/download/windows-ce-6/en_windows_embedded_ce_6.0_dvd.iso" en_windows_embedded_ce_6.0_dvd.iso
+          download_iso r2 "https://archive.org/download/windows-ce-6/CE6R2.iso" CE6R2.iso
+          download_iso r3 "https://archive.org/download/windows-ce-6/CE6R3.iso" CE6R3.iso
+          df -h /
+
+      - name: Extract and merge all CE6 media sequentially on one runner
         shell: bash
         run: |
           set -euxo pipefail
           rm -rf ce600
-          python3 wince-source/scripts/ce6_lowdisk_driver.py --scope all -o ce600
+          python3 wince-source/scripts/ce6_lowdisk_driver.py \
+            --base-iso ce6-media/en_windows_embedded_ce_6.0_dvd.iso \
+            --r2-iso ce6-media/CE6R2.iso \
+            --r3-iso ce6-media/CE6R3.iso \
+            --scope all -o ce600
           test -f ce600/manifest.json
           test -d ce600/PUBLIC
           test -d ce600/PRIVATE
@@ -111,8 +139,8 @@ jobs:
           set -euxo pipefail
           cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DWCE_CEGCC_DIR="$WCE_CEGCC_DIR"
           set -o pipefail
-          cmake --build build --verbose 2>&1 | tee ../wcebuild-build.log
-          ctest --test-dir build --output-on-failure 2>&1 | tee ../wcebuild-ctest.log
+          cmake --build build --parallel 2 --verbose 2>&1 | tee ../wcebuild-build.log
+          ctest --test-dir build --output-on-failure --parallel 2 2>&1 | tee ../wcebuild-ctest.log
 
       - name: Run actual CE6 full build through ROMIMAGE
         shell: bash
