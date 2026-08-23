@@ -114,6 +114,7 @@ jobs:
           cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DWCE_CEGCC_DIR="$WCE_CEGCC_DIR"
           set -o pipefail
           cmake --build build --verbose 2>&1 | tee ../wcebuild-build.log
+          ctest --test-dir build --output-on-failure 2>&1 | tee ../wcebuild-ctest.log
 
       - name: Run actual CE6 full build through ROMIMAGE
         shell: bash
@@ -127,7 +128,7 @@ jobs:
           set -euo pipefail
           ENGINE="$PWD/wince-build/build/wcefullbuild"
           test -x "$ENGINE"
-          ARGS=(--root "$PWD/ce600" --out "$PWD/full-ce6-out" --toolchain cegcc --cpu "$CE_CPU" --platform "$CE_PLATFORM")
+          ARGS=(--root "$PWD/ce600" --out "$PWD/full-ce6-out" --toolchain cegcc --cpu "$CE_CPU" --platform "$CE_PLATFORM" --allow-missing-dirs-file "$PWD/wince-build/config/allow-missing-dirs.oak-coreos.txt" --allow-missing-dirs-file "$PWD/wince-build/config/allow-missing-dirs.full-tree.txt")
           if [[ "$EVENT_NAME" == "workflow_dispatch" ]]; then
             if [[ -n "$CE_OSDESIGN" ]]; then
               test -f "$PWD/ce600/$CE_OSDESIGN"
@@ -146,6 +147,7 @@ jobs:
           "$ENGINE" "${ARGS[@]}" 2>&1 | tee full-ce6-build.log
           test -s full-ce6-out/build.ninja
           test -s full-ce6-out/merged.bib
+          test -s full-ce6-out/ceconfig.h
           test -s full-ce6-out/release/default.hv
           test -s full-ce6-out/release/merged.reg
           test -s full-ce6-out/release/NK.BIN
@@ -160,6 +162,7 @@ jobs:
             revisions.txt
             cegcc-version.log
             wcebuild-build.log
+            wcebuild-ctest.log
             full-ce6-build.log
             nkbin.sha256
             full-ce6-out/release/NK.BIN
