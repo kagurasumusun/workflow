@@ -101,3 +101,6 @@ jobs:
           export GIT_CONFIG_KEY_0=credential.helper
           export GIT_CONFIG_VALUE_0='!f() { echo username=x-access-token; echo "password=$WINCE_REPO_PAT"; }; f'
           git push origin HEAD:main
+
+# CI trigger refresh after full test-set integration.
+# Temporary dummy create/delete cycle completed; rebuild latest wince-build.
