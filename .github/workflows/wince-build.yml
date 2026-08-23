@@ -14,6 +14,8 @@ permissions:
 
 # External CI executes the current private repository main branch on each run.
 # No concurrency group: every invocation gets an independent runner.
+# The private checkout is authenticated through the repository secret and the
+# current clean-room guard intentionally scans implementation-bearing sources.
 jobs:
   build:
     strategy:
