@@ -42,8 +42,14 @@ jobs:
           set -euo pipefail
           test -n "$WINCE_REPO_PAT"
           rm -rf wince-source wince-build
-          git -c http.extraheader="AUTHORIZATION: bearer ${WINCE_REPO_PAT}" clone --depth 1 --branch main https://github.com/kagurasumusun/wince-source.git wince-source
-          git -c http.extraheader="AUTHORIZATION: bearer ${WINCE_REPO_PAT}" clone --depth 1 --branch main https://github.com/kagurasumusun/wince-build.git wince-build
+          export GIT_CONFIG_COUNT=1
+          export GIT_CONFIG_KEY_0=http.https://github.com/.extraheader
+          export GIT_CONFIG_VALUE_0="Authorization: Bearer ${WINCE_REPO_PAT}"
+          git ls-remote --exit-code https://github.com/kagurasumusun/wince-source.git HEAD >/dev/null
+          git ls-remote --exit-code https://github.com/kagurasumusun/wince-build.git HEAD >/dev/null
+          git clone --depth 1 --branch main https://github.com/kagurasumusun/wince-source.git wince-source
+          git clone --depth 1 --branch main https://github.com/kagurasumusun/wince-build.git wince-build
+          unset GIT_CONFIG_VALUE_0 GIT_CONFIG_KEY_0 GIT_CONFIG_COUNT
           echo "wince-source=$(git -C wince-source rev-parse HEAD)" | tee revisions.txt
           echo "wince-build=$(git -C wince-build rev-parse HEAD)" | tee -a revisions.txt
 
