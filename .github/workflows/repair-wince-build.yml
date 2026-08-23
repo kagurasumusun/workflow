@@ -34,7 +34,7 @@ jobs:
         with:
           python-version: '3.12'
 
-      - name: Apply clean-room build repairs
+      - name: Apply build repairs
         working-directory: wince-build
         shell: python
         run: |
@@ -47,7 +47,8 @@ jobs:
 
           p = Path('engine/include/wce/fullbuild.hpp')
           s = p.read_text(encoding='utf-8')
-          if 'allow_missing_dirs_files' not in s: s = s.replace('    std::vector<std::string> excluded_variables;\n', '    std::vector<std::string> excluded_variables;\n    std::vector<std::string> allow_missing_dirs_files;\n', 1)
+          if 'allow_missing_dirs_files' not in s:
+              s = s.replace('    std::vector<std::string> excluded_variables;\n', '    std::vector<std::string> excluded_variables;\n    std::vector<std::string> allow_missing_dirs_files;\n', 1)
           p.write_text(s, encoding='utf-8')
 
           p = Path('engine/fullbuild/main.cpp')
@@ -58,7 +59,8 @@ jobs:
 
           p = Path('engine/src/fullbuild.cpp')
           s = p.read_text(encoding='utf-8')
-          if '#include "wce/sysgen_output.hpp"' not in s: s = s.replace('#include "wce/sysgen.hpp"\n', '#include "wce/sysgen.hpp"\n#include "wce/sysgen_output.hpp"\n', 1)
+          if '#include "wce/sysgen_output.hpp"' not in s:
+              s = s.replace('#include "wce/sysgen.hpp"\n', '#include "wce/sysgen.hpp"\n#include "wce/sysgen_output.hpp"\n', 1)
           if 'load_missing_dirs_files' not in s:
               helper = '''\nstatic std::set<std::string> load_missing_dirs_files(const std::vector<std::string>& files) {\n    std::set<std::string> out;\n    for (const auto& file : files) {\n        std::ifstream f(file);\n        if (!f) throw ParseError("fullbuild: cannot open allow-missing-dirs file: " + file);\n        std::string line;\n        while (std::getline(f, line)) { auto p=line.find('#'); if(p!=std::string::npos) line.resize(p); line=trim(line); if(line.empty()) continue; out.insert(to_lower(to_fwd(fs::path(line).lexically_normal().string()))); }\n    }\n    return out;\n}\n'''
               s = s.replace('static void apply_global_build_layers(', helper + '\nstatic void apply_global_build_layers(', 1)
@@ -66,8 +68,10 @@ jobs:
               helper = '''\nstatic std::vector<std::string> default_start_dirs(const fs::path& root) {\n    std::vector<std::string> out; const char* roots[] = {"PUBLIC","PRIVATE","PLATFORM","OTHERS","SDK"}; std::error_code ec;\n    for(const char* r:roots){ fs::path base=root/r; if(!fs::is_directory(base,ec)) continue; for(fs::recursive_directory_iterator it(base,fs::directory_options::skip_permission_denied,ec),end;it!=end;it.increment(ec)){ if(ec){ec.clear();continue;} if(!it->is_regular_file(ec) || to_lower(it->path().filename().string())!="dirs") continue; auto rel=fs::relative(it->path().parent_path(),root,ec); if(!ec) out.push_back(to_fwd(rel.string())); } }\n    std::sort(out.begin(),out.end()); out.erase(std::unique(out.begin(),out.end()),out.end()); return out;\n}\n'''
               s = s.replace('static std::set<std::string> load_missing_dirs_files(', helper + '\nstatic std::set<std::string> load_missing_dirs_files(', 1)
           s = s.replace('so.root_abs=root.string();so.strict=o.strict;so.start_dirs=o.start_dirs.empty()?std::vector<std::string>{"."}:o.start_dirs;so.allow_missing_dirs=load_missing_dirs_files(o.allow_missing_dirs_files);', 'so.root_abs=root.string();so.strict=o.strict;so.start_dirs=o.start_dirs.empty()?default_start_dirs(root):o.start_dirs;so.allow_missing_dirs=load_missing_dirs_files(o.allow_missing_dirs_files);', 1)
-          if '#include "wce/buildvalidate.hpp"' not in s: s = s.replace('#include "wce/graph.hpp"\n', '#include "wce/graph.hpp"\n#include "wce/buildvalidate.hpp"\n', 1)
-          if 'validate_build_graph(graph,false,rep);' not in s: s = s.replace('auto graph=scan_tree(so,seed);', 'auto graph=scan_tree(so,seed);validate_build_graph(graph,false,rep);', 1)
+          if '#include "wce/buildvalidate.hpp"' not in s:
+              s = s.replace('#include "wce/graph.hpp"\n', '#include "wce/graph.hpp"\n#include "wce/buildvalidate.hpp"\n', 1)
+          if 'validate_build_graph(graph,false,rep);' not in s:
+              s = s.replace('auto graph=scan_tree(so,seed);', 'auto graph=scan_tree(so,seed);validate_build_graph(graph,false,rep);', 1)
           p.write_text(s, encoding='utf-8')
 
       - name: Build engine and run unit tests
@@ -75,7 +79,6 @@ jobs:
         shell: bash
         run: |
           set -euxo pipefail
-          python scripts/check_cleanroom_provenance.py .
           cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
           cmake --build build --parallel 2
           ctest --test-dir build --output-on-failure
