@@ -16,7 +16,82 @@ jobs:
           ref: main
           token: ${{ secrets.WINCE_REPO_PAT }}
           fetch-depth: 1
-      - name: Verify source tree
+
+      - name: Install extraction dependencies
         run: |
-          test -f scripts/ce6_extract.py
-          python3 --version
+          sudo apt-get update
+          sudo apt-get install -y p7zip-full python3-pip
+          python3 -m pip install --break-system-packages -r scripts/requirements.txt
+
+      - name: Download and extract CE6 sequentially
+        shell: bash
+        run: |
+          set -euo pipefail
+          rm -rf ce600 .ce6_media
+          mkdir -p .ce6_media
+          python3 - <<'PY'
+          import os, sys
+          import ce6_extract as ce
+
+          original_copyfile = ce.shutil.copyfile
+
+          def low_disk_copyfile(src, dst):
+              src = os.fspath(src)
+              dst = os.fspath(dst)
+              try:
+                  parent = os.path.dirname(dst) or "."
+                  if os.stat(src).st_dev == os.stat(parent).st_dev:
+                      os.makedirs(parent, exist_ok=True)
+                      os.replace(src, dst)
+                      return dst
+              except OSError:
+                  pass
+              return original_copyfile(src, dst)
+
+          ce.shutil.copyfile = low_disk_copyfile
+          out = os.path.abspath("ce600")
+          media = os.path.abspath(".ce6_media")
+          manifests = []
+          try:
+              for tag in ("base", "r2", "r3"):
+                  iso = ce.download_iso(ce.IA_ITEM, ce.IA_FILES[tag], media)
+                  manifest = os.path.join(media, tag + "-manifest.json")
+                  old_argv = sys.argv
+                  sys.argv = [
+                      "ce6_extract.py", "extract", "--iso", iso,
+                      "-o", out, "--scope", "source", "--stream-cabs",
+                      "--manifest", manifest,
+                  ]
+                  try:
+                      ce.main()
+                  finally:
+                      sys.argv = old_argv
+                  manifests.append(manifest)
+                  os.remove(iso)
+              ce.merge_manifest_files(manifests, os.path.join(out, "manifest.json"))
+              for manifest in manifests:
+                  try:
+                      os.remove(manifest)
+                  except FileNotFoundError:
+                      pass
+          finally:
+              ce.shutil.copyfile = original_copyfile
+          PY
+          rm -rf .ce6_media
+
+      - name: Verify complete source tree
+        run: |
+          set -euo pipefail
+          test -d ce600/PUBLIC
+          test -d ce600/PRIVATE
+          test -d ce600/PLATFORM
+          test -f ce600/manifest.json
+          du -sh ce600
+          python3 - <<'PY'
+          import json
+          with open('ce600/manifest.json', encoding='utf-8') as f:
+              m = json.load(f)
+          assert m.get('count', 0) > 100000, m.get('count')
+          assert len(m.get('isos', [])) == 3, m.get('isos')
+          print('verified files:', m['count'])
+          PY
