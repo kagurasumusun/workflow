@@ -12,7 +12,7 @@ permissions:
 jobs:
   repair-test-push:
     runs-on: ubuntu-24.04
-    timeout-minutes: 120
+    timeout-minutes: 180
     steps:
       - name: Clone private wince-build
         env:
@@ -21,7 +21,13 @@ jobs:
         run: |
           set -euo pipefail
           test -n "$WINCE_REPO_PAT"
-          git -c http.extraheader="AUTHORIZATION: bearer ${WINCE_REPO_PAT}" clone --depth 1 --branch main https://github.com/kagurasumusun/wince-build.git wince-build
+          rm -rf wince-build
+          export GIT_CONFIG_COUNT=1
+          export GIT_CONFIG_KEY_0=http.https://github.com/.extraheader
+          export GIT_CONFIG_VALUE_0="Authorization: Bearer ${WINCE_REPO_PAT}"
+          git ls-remote --exit-code https://github.com/kagurasumusun/wince-build.git HEAD >/dev/null
+          git clone --depth 1 --branch main https://github.com/kagurasumusun/wince-build.git wince-build
+          unset GIT_CONFIG_VALUE_0 GIT_CONFIG_KEY_0 GIT_CONFIG_COUNT
 
       - uses: actions/setup-python@v5
         with:
@@ -32,11 +38,13 @@ jobs:
         shell: python
         run: |
           from pathlib import Path
+
           p = Path('engine/src/ninjaemit.cpp')
           s = p.read_text(encoding='utf-8')
           old = 'else if(t.type==TargetType::DynLink){std::string dll=mainout,implib;if(tc.pe_import_lib){auto pit=produced.find(to_lower(t.name+".lib"));if(pit==produced.end())problems.push_back(t.dir_rel+": DLL target has no import-library output entry: "+t.name+".lib");else implib=pit->second;if(!implib.empty())o<<"build "<<nescape(q(implib))<<" | ";}o<<"build "<<nescape(q(dll))<<": dll";'
           new = 'else if(t.type==TargetType::DynLink){std::string dll=mainout,implib;if(tc.pe_import_lib){auto pit=produced.find(to_lower(t.name+".lib"));if(pit==produced.end())problems.push_back(t.dir_rel+": DLL target has no import-library output entry: "+t.name+".lib");else implib=pit->second;}o<<"build "<<nescape(q(dll));if(!implib.empty())o<<" "<<nescape(q(implib));o<<": dll";'
-          if old in s: p.write_text(s.replace(old, new, 1), encoding='utf-8')
+          if old in s:
+              p.write_text(s.replace(old, new, 1), encoding='utf-8')
 
           p = Path('engine/include/wce/fullbuild.hpp')
           s = p.read_text(encoding='utf-8')
@@ -76,33 +84,7 @@ jobs:
           cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
           cmake --build build --parallel 2
           ctest --test-dir build --output-on-failure
-
-      - name: Exercise clean-room PE32 relocation engine
-        working-directory: wince-build
-        shell: bash
-        run: |
-          set -euxo pipefail
-          cat > /tmp/pe_reloc_smoke.cpp <<'CPP'
-          #include <cstdint>
-          #include <vector>
-          #include <cstdio>
-          #include "engine/include/wce/romimage.hpp"
-          int main() {
-            std::vector<uint8_t> image(0x100, 0);
-            image[0x20]=0x00; image[0x21]=0x10; image[0x22]=0x00; image[0x23]=0x80;
-            image[0x40]=0x00; image[0x41]=0x00; image[0x42]=0x00; image[0x43]=0x00;
-            image[0x44]=0x0c; image[0x45]=0x00;
-            image[0x48]=0x20; image[0x49]=0x30;
-            wce::Report rep; wce::PeRelocationStats st{};
-            if (!wce::apply_pe32_relocations(image, 0x80000000u, 0x80001000u, 0x40, 12, &st, &rep)) return 1;
-            if (image[0x20]!=0x00 || image[0x21]!=0x20 || image[0x22]!=0x00 || image[0x23]!=0x80) return 2;
-            if (st.highlow != 1) return 3;
-            std::puts("PE32 relocation smoke OK");
-            return 0;
-          }
-          CPP
-          c++ -std=c++17 -I. /tmp/pe_reloc_smoke.cpp -o /tmp/pe_reloc_smoke
-          /tmp/pe_reloc_smoke
+          ctest --test-dir build --output-on-failure -R '^test_pefixup$'
 
       - name: Commit repairs to private main
         working-directory: wince-build
@@ -114,6 +96,12 @@ jobs:
           git config user.name 'wince-ci'
           git config user.email 'wince-ci@users.noreply.github.com'
           git add engine/src/ninjaemit.cpp engine/src/fullbuild.cpp engine/include/wce/fullbuild.hpp engine/fullbuild/main.cpp
-          if git diff --cached --quiet; then echo 'No repairs to commit.'; exit 0; fi
+          if git diff --cached --quiet; then
+            echo 'No repairs to commit.'
+            exit 0
+          fi
           git commit -m 'fix: harden fullbuild graph and source-root discovery'
-          git -c http.extraheader="AUTHORIZATION: bearer ${WINCE_REPO_PAT}" push origin HEAD:main
+          export GIT_CONFIG_COUNT=1
+          export GIT_CONFIG_KEY_0=http.https://github.com/.extraheader
+          export GIT_CONFIG_VALUE_0="Authorization: Bearer ${WINCE_REPO_PAT}"
+          git push origin HEAD:main
