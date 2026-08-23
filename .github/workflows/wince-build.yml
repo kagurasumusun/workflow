@@ -1,0 +1,62 @@
+name: wince-build
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - '.github/workflows/wince-build.yml'
+  pull_request:
+    paths:
+      - '.github/workflows/wince-build.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      max-parallel: 3
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-2022]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - name: Checkout wince-build
+        uses: actions/checkout@v4
+        with:
+          repository: kagurasumusun/wince-build
+          ref: main
+          token: ${{ secrets.WINCE_REPO_PAT }}
+          path: wince-build
+      - name: Checkout wince-source
+        uses: actions/checkout@v4
+        with:
+          repository: kagurasumusun/wince-source
+          ref: main
+          token: ${{ secrets.WINCE_REPO_PAT }}
+          path: wince-source
+          fetch-depth: 1
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install Ninja
+        run: python -m pip install ninja
+      - name: Configure
+        working-directory: wince-build
+        run: cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
+      - name: Build
+        working-directory: wince-build
+        run: cmake --build build --verbose 2>&1 | tee build.log
+      - name: Test
+        working-directory: wince-build/build
+        run: ctest --output-on-failure 2>&1 | tee ../ctest.log
+      - name: Upload logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: wince-build-${{ matrix.os }}-${{ github.run_id }}
+          path: |
+            wince-build/build.log
+            wince-build/ctest.log
+          if-no-files-found: ignore
+          retention-days: 14
