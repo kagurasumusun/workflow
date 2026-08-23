@@ -18,7 +18,7 @@ jobs:
           set -euo pipefail
           test -n "$WINCE_REPO_PAT"
           rm -rf wince-source
-          git clone --depth 1 --branch main "https://x-access-token:${WINCE_REPO_PAT}@github.com/kagurasumusun/wince-source.git" wince-source
+          git -c http.extraheader="AUTHORIZATION: bearer ${WINCE_REPO_PAT}" clone --depth 1 --branch main https://github.com/kagurasumusun/wince-source.git wince-source
           cd wince-source
           git rev-parse HEAD
           test -f scripts/ce6_extract.py
