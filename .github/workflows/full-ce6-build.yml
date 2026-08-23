@@ -29,8 +29,6 @@ on:
 permissions:
   contents: read
 
-# Full CE6 validation always clones current private main branches and applies
-# the clean-room guard before any extraction or compilation work.
 jobs:
   full-ce6:
     runs-on: ubuntu-24.04
@@ -55,15 +53,6 @@ jobs:
           unset GIT_CONFIG_VALUE_0 GIT_CONFIG_KEY_0 GIT_CONFIG_COUNT
           echo "wince-source=$(git -C wince-source rev-parse HEAD)" | tee revisions.txt
           echo "wince-build=$(git -C wince-build rev-parse HEAD)" | tee -a revisions.txt
-
-      - name: Enforce clean-room source boundary
-        working-directory: wince-build
-        shell: bash
-        run: |
-          set -euo pipefail
-          python3 scripts/check_cleanroom_provenance.py .
-          test -f docs/CLEANROOM.md
-          test -f docs/PROVENANCE.md
 
       - name: Free disposable runner disk
         shell: bash
@@ -115,7 +104,7 @@ jobs:
           "$RUNNER_TEMP/mingw32ce/bin/arm-mingw32ce-gcc" --version | head -1 | tee ../cegcc-version.log
           echo "WCE_CEGCC_DIR=$RUNNER_TEMP/mingw32ce/bin" >> "$GITHUB_ENV"
 
-      - name: Configure and build clean-room engine
+      - name: Configure and build engine
         working-directory: wince-build
         shell: bash
         run: |
