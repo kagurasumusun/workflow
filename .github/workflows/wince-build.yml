@@ -12,6 +12,7 @@ on:
 permissions:
   contents: read
 
+# No concurrency group: every invocation gets an independent runner.
 jobs:
   build:
     strategy:
@@ -38,26 +39,28 @@ jobs:
           git -c http.extraheader="AUTHORIZATION: bearer ${WINCE_REPO_PAT}" clone --depth 1 --branch main https://github.com/kagurasumusun/wince-build.git wince-build
           git -c http.extraheader="AUTHORIZATION: bearer ${WINCE_REPO_PAT}" clone --depth 1 --branch main https://github.com/kagurasumusun/wince-source.git wince-source
           test -f wince-build/CMakeLists.txt
+          test -f wince-build/scripts/provision-cegcc.sh
           test -f wince-source/scripts/ce6_extract.py
-          git -C wince-build rev-parse HEAD
-          git -C wince-source rev-parse HEAD
+          echo "wince-build=$(git -C wince-build rev-parse HEAD)"
+          echo "wince-source=$(git -C wince-source rev-parse HEAD)"
 
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'
       - name: Install Ninja
         run: python -m pip install ninja
-      - name: Provision ceGCC
+
+      - name: Provision pinned ceGCC 0.59.1 / GCC 4.4.0
         if: matrix.name == 'ubuntu-cegcc'
         shell: bash
+        working-directory: wince-build
         run: |
           set -euxo pipefail
-          z="$RUNNER_TEMP/cegcc.zip"
-          curl -fsSL --retry 8 --retry-all-errors -o "$z" https://github.com/brain-hackers/cegcc-build/releases/download/2026-04-14-154823/cegcc-x86_64-2026-04-14-154823.zip
-          echo "3bcc5728ba1cc9c4d8cfabaed5c55650e0eacf2c3cf2b620d5739e99293ebb63  $z" | sha256sum -c -
-          mkdir -p "$RUNNER_TEMP/cegcc"
-          python -m zipfile -e "$z" "$RUNNER_TEMP/cegcc"
-          echo "WCE_CEGCC_DIR=$RUNNER_TEMP/cegcc/cegcc/bin" >> "$GITHUB_ENV"
+          chmod +x scripts/provision-cegcc.sh
+          scripts/provision-cegcc.sh "$RUNNER_TEMP/mingw32ce"
+          echo "WCE_CEGCC_DIR=$RUNNER_TEMP/mingw32ce/bin" >> "$GITHUB_ENV"
+          "$RUNNER_TEMP/mingw32ce/bin/arm-mingw32ce-gcc" --version | head -1
+
       - name: Setup MSVC
         if: matrix.name == 'windows-msvc'
         uses: ilammy/msvc-dev-cmd@v1
@@ -68,23 +71,37 @@ jobs:
           cl 2>&1 | Tee-Object cl-version.log
           where.exe cl | Tee-Object -Append cl-version.log
           where.exe link | Tee-Object -Append cl-version.log
+
       - name: Configure
         working-directory: wince-build
         shell: bash
         run: |
+          set -euxo pipefail
           cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release ${WCE_CEGCC_DIR:+-DWCE_CEGCC_DIR=$WCE_CEGCC_DIR}
+
+      - name: Assert CE target E2E registered
+        if: matrix.name == 'ubuntu-cegcc'
+        working-directory: wince-build/build
+        shell: bash
+        run: |
+          set -euxo pipefail
+          grep -rq e2e_cegcc_target . --include=CTestTestfile.cmake
+          grep -rq e2e_ceinc_pristine . --include=CTestTestfile.cmake
+
       - name: Build
         working-directory: wince-build
         shell: bash
         run: |
           set -o pipefail
           cmake --build build --verbose 2>&1 | tee build.log
+
       - name: Test
         working-directory: wince-build/build
         shell: bash
         run: |
           set -o pipefail
           ctest --output-on-failure 2>&1 | tee ../ctest.log
+
       - name: Upload compiler/test logs
         if: always()
         uses: actions/upload-artifact@v4
