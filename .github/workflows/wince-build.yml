@@ -12,6 +12,7 @@ on:
 permissions:
   contents: read
 
+# External CI executes the current private repository main branch on each run.
 # No concurrency group: every invocation gets an independent runner.
 jobs:
   build:
