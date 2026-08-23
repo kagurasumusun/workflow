@@ -4,7 +4,7 @@ on:
   workflow_dispatch:
     inputs:
       osdesign:
-        description: 'Optional path to a CE6 .pbxml OS Design inside wince-source checkout'
+        description: 'Optional path to a CE6 .pbxml OS Design inside the private source checkout'
         required: false
         default: ''
       sysgen_defaults:
@@ -19,8 +19,6 @@ on:
 permissions:
   contents: read
 
-# One runner owns the entire acquisition + extraction + build chain.
-# There is intentionally no concurrency group.
 jobs:
   full-ce6:
     runs-on: ubuntu-24.04
@@ -39,7 +37,7 @@ jobs:
           echo "wince-source=$(git -C wince-source rev-parse HEAD)"
           echo "wince-build=$(git -C wince-build rev-parse HEAD)"
 
-      - name: Free runner disk reserved for preinstalled SDKs
+      - name: Free preinstalled runner disk where available
         shell: bash
         run: |
           set -euxo pipefail
@@ -57,12 +55,12 @@ jobs:
           sudo apt-get install -y p7zip-full patchelf python3-pip
           python -m pip install -r wince-source/scripts/requirements.txt
 
-      - name: Download + extract CE6 sequentially on this runner
+      - name: Download and extract complete CE6 media sequentially
         shell: bash
         run: |
           set -euo pipefail
           rm -rf ce600
-          python3 wince-source/scripts/ce6_lowdisk_driver.py -o ce600
+          python3 wince-source/scripts/ce6_lowdisk_driver.py --scope all -o ce600
           test -f ce600/manifest.json
           test -d ce600/PUBLIC
           test -d ce600/PRIVATE
@@ -93,7 +91,6 @@ jobs:
         run: |
           set -euxo pipefail
           cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DWCE_CEGCC_DIR="$WCE_CEGCC_DIR"
-          test -x build/engine/wcefullbuild || test -x build/wcefullbuild || true
 
       - name: Build wcebuild engine
         shell: bash
@@ -102,23 +99,27 @@ jobs:
           set -o pipefail
           cmake --build build --verbose 2>&1 | tee ../wcebuild-build.log
 
-      - name: Run full CE6 build through ROMIMAGE
+      - name: Run real CE6 build through ROMIMAGE
         shell: bash
         env:
           OSDESIGN_INPUT: ${{ inputs.osdesign }}
           SYSGEN_DEFAULTS_INPUT: ${{ inputs.sysgen_defaults }}
+          EVENT_NAME: ${{ github.event_name }}
         run: |
           set -euo pipefail
           ENGINE="$(find wince-build/build -type f -name wcefullbuild -perm -111 | head -1)"
           test -n "$ENGINE"
           ARGS=(--root "$PWD/ce600" --out "$PWD/full-ce6-out" --toolchain cegcc --cpu ARMV4I)
           if [ -n "$OSDESIGN_INPUT" ]; then
+            test -f "$PWD/wince-source/$OSDESIGN_INPUT"
             ARGS+=(--osdesign "$PWD/wince-source/$OSDESIGN_INPUT")
-          elif [ "$SYSGEN_DEFAULTS_INPUT" = "true" ]; then
-            ARGS+=(--sysgen-defaults)
           else
-            echo "No PBXML and --sysgen-defaults=false; refusing an under-specified OS build." >&2
-            exit 2
+            # workflow_dispatch defaults to true; non-dispatch runs have no inputs.
+            if [ "$EVENT_NAME" = "workflow_dispatch" ] && [ "$SYSGEN_DEFAULTS_INPUT" != "true" ]; then
+              echo "No PBXML and --sysgen-defaults=false; refusing an under-specified OS build." >&2
+              exit 2
+            fi
+            ARGS+=(--sysgen-defaults)
           fi
           set -o pipefail
           "$ENGINE" "${ARGS[@]}" 2>&1 | tee full-ce6-build.log
