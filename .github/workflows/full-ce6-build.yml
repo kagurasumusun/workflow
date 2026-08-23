@@ -3,15 +3,25 @@ name: full-ce6-build
 on:
   workflow_dispatch:
     inputs:
+      platform:
+        description: 'CE6 BSP/platform directory name'
+        required: true
+        type: string
       osdesign:
-        description: 'Optional path to a CE6 .pbxml OS Design inside the private source checkout'
+        description: 'Optional .pbxml path relative to ce600; leave empty for unique OSDesign'
         required: false
         default: ''
+        type: string
+      cpu:
+        description: 'CE6 target CPU'
+        required: false
+        default: ARMV4I
+        type: string
       sysgen_defaults:
-        description: 'Select catalog variables with DefaultValue=1 when no PBXML is provided'
+        description: 'Select catalog variables with DefaultValue=1 in addition to OSDesign selections'
         required: false
         type: boolean
-        default: true
+        default: false
   push:
     paths:
       - '.github/workflows/full-ce6-build.yml'
@@ -34,10 +44,10 @@ jobs:
           rm -rf wince-source wince-build
           git -c http.extraheader="AUTHORIZATION: bearer ${WINCE_REPO_PAT}" clone --depth 1 --branch main https://github.com/kagurasumusun/wince-source.git wince-source
           git -c http.extraheader="AUTHORIZATION: bearer ${WINCE_REPO_PAT}" clone --depth 1 --branch main https://github.com/kagurasumusun/wince-build.git wince-build
-          echo "wince-source=$(git -C wince-source rev-parse HEAD)"
-          echo "wince-build=$(git -C wince-build rev-parse HEAD)"
+          echo "wince-source=$(git -C wince-source rev-parse HEAD)" | tee revisions.txt
+          echo "wince-build=$(git -C wince-build rev-parse HEAD)" | tee -a revisions.txt
 
-      - name: Free preinstalled runner disk where available
+      - name: Free disposable runner disk
         shell: bash
         run: |
           set -euxo pipefail
@@ -48,17 +58,19 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'
+
       - name: Install extraction/build dependencies
         run: |
-          python -m pip install ninja
+          set -euxo pipefail
           sudo apt-get update
           sudo apt-get install -y p7zip-full patchelf python3-pip
+          python -m pip install ninja
           python -m pip install -r wince-source/scripts/requirements.txt
 
-      - name: Download and extract complete CE6 media sequentially
+      - name: Download and extract all CE6 media sequentially on one runner
         shell: bash
         run: |
-          set -euo pipefail
+          set -euxo pipefail
           rm -rf ce600
           python3 wince-source/scripts/ce6_lowdisk_driver.py --scope all -o ce600
           test -f ce600/manifest.json
@@ -76,65 +88,72 @@ jobs:
           df -h /
 
       - name: Provision pinned ceGCC 0.59.1 / GCC 4.4.0
-        shell: bash
         working-directory: wince-build
+        shell: bash
         run: |
           set -euxo pipefail
           chmod +x scripts/provision-cegcc.sh
           scripts/provision-cegcc.sh "$RUNNER_TEMP/mingw32ce"
-          "$RUNNER_TEMP/mingw32ce/bin/arm-mingw32ce-gcc" --version | head -1
+          "$RUNNER_TEMP/mingw32ce/bin/arm-mingw32ce-gcc" --version | head -1 | tee ../cegcc-version.log
           echo "WCE_CEGCC_DIR=$RUNNER_TEMP/mingw32ce/bin" >> "$GITHUB_ENV"
 
-      - name: Configure wcebuild engine
-        shell: bash
+      - name: Configure and build clean-room engine
         working-directory: wince-build
+        shell: bash
         run: |
           set -euxo pipefail
           cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DWCE_CEGCC_DIR="$WCE_CEGCC_DIR"
-
-      - name: Build wcebuild engine
-        shell: bash
-        working-directory: wince-build
-        run: |
           set -o pipefail
           cmake --build build --verbose 2>&1 | tee ../wcebuild-build.log
 
-      - name: Run real CE6 build through ROMIMAGE
+      - name: Run actual CE6 full build through ROMIMAGE
         shell: bash
         env:
-          OSDESIGN_INPUT: ${{ inputs.osdesign }}
-          SYSGEN_DEFAULTS_INPUT: ${{ inputs.sysgen_defaults }}
+          CE_PLATFORM: ${{ inputs.platform }}
+          CE_CPU: ${{ inputs.cpu }}
+          CE_OSDESIGN: ${{ inputs.osdesign }}
+          CE_DEFAULTS: ${{ inputs.sysgen_defaults }}
           EVENT_NAME: ${{ github.event_name }}
         run: |
           set -euo pipefail
-          ENGINE="$(find wince-build/build -type f -name wcefullbuild -perm -111 | head -1)"
-          test -n "$ENGINE"
-          ARGS=(--root "$PWD/ce600" --out "$PWD/full-ce6-out" --toolchain cegcc --cpu ARMV4I)
-          if [ -n "$OSDESIGN_INPUT" ]; then
-            test -f "$PWD/wince-source/$OSDESIGN_INPUT"
-            ARGS+=(--osdesign "$PWD/wince-source/$OSDESIGN_INPUT")
-          else
-            # workflow_dispatch defaults to true; non-dispatch runs have no inputs.
-            if [ "$EVENT_NAME" = "workflow_dispatch" ] && [ "$SYSGEN_DEFAULTS_INPUT" != "true" ]; then
-              echo "No PBXML and --sysgen-defaults=false; refusing an under-specified OS build." >&2
+          ENGINE="$PWD/wince-build/build/wcefullbuild"
+          test -x "$ENGINE"
+          ARGS=(--root "$PWD/ce600" --out "$PWD/full-ce6-out" --toolchain cegcc --cpu "$CE_CPU" --platform "$CE_PLATFORM")
+          if [[ "$EVENT_NAME" == "workflow_dispatch" ]]; then
+            if [[ -n "$CE_OSDESIGN" ]]; then
+              test -f "$PWD/ce600/$CE_OSDESIGN"
+              ARGS+=(--osdesign "$PWD/ce600/$CE_OSDESIGN")
+            elif [[ "$CE_DEFAULTS" == "true" ]]; then
+              ARGS+=(--sysgen-defaults)
+            else
+              echo 'No OSDesign and sysgen_defaults=false; refusing an under-specified build.' >&2
               exit 2
             fi
-            ARGS+=(--sysgen-defaults)
+          else
+            # A workflow-file push is only a wiring check; it must not pretend to be a full OS build.
+            echo 'Full CE6 build requires workflow_dispatch inputs.'
+            exit 2
           fi
           set -o pipefail
           "$ENGINE" "${ARGS[@]}" 2>&1 | tee full-ce6-build.log
           test -s full-ce6-out/build.ninja
           test -s full-ce6-out/sysgen/merged.bib
           test -s full-ce6-out/sysgen/ceconfig.h
-          test -s full-ce6-out/NK.XIP
+          test -s full-ce6-out/NK.BIN
+          sha256sum full-ce6-out/NK.BIN | tee nkbin.sha256
 
-      - name: Upload compact full-build diagnostics
+      - name: Upload compact diagnostics and final image
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: full-ce6-diagnostics-${{ github.run_id }}
+          name: full-ce6-${{ github.run_id }}
           path: |
+            revisions.txt
+            cegcc-version.log
             wcebuild-build.log
             full-ce6-build.log
+            nkbin.sha256
+            full-ce6-out/NK.BIN
+          if-no-files-found: ignore
           retention-days: 14
           compression-level: 6
