@@ -12,8 +12,6 @@ on:
 permissions:
   contents: read
 
-# No concurrency group: every invocation runs independently.
-
 jobs:
   build:
     strategy:
@@ -29,21 +27,21 @@ jobs:
             os: windows-2022
     runs-on: ${{ matrix.os }}
     steps:
-      - name: Checkout private wince-build
-        uses: actions/checkout@v4
-        with:
-          repository: kagurasumusun/wince-build
-          ref: main
-          token: ${{ secrets.WINCE_REPO_PAT }}
-          path: wince-build
-      - name: Checkout private wince-source
-        uses: actions/checkout@v4
-        with:
-          repository: kagurasumusun/wince-source
-          ref: main
-          token: ${{ secrets.WINCE_REPO_PAT }}
-          path: wince-source
-          fetch-depth: 1
+      - name: Clone private repositories
+        shell: bash
+        env:
+          WINCE_REPO_PAT: ${{ secrets.WINCE_REPO_PAT }}
+        run: |
+          set -euo pipefail
+          test -n "$WINCE_REPO_PAT"
+          rm -rf wince-build wince-source
+          git -c http.extraheader="AUTHORIZATION: bearer ${WINCE_REPO_PAT}" clone --depth 1 --branch main https://github.com/kagurasumusun/wince-build.git wince-build
+          git -c http.extraheader="AUTHORIZATION: bearer ${WINCE_REPO_PAT}" clone --depth 1 --branch main https://github.com/kagurasumusun/wince-source.git wince-source
+          test -f wince-build/CMakeLists.txt
+          test -f wince-source/scripts/ce6_extract.py
+          git -C wince-build rev-parse HEAD
+          git -C wince-source rev-parse HEAD
+
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'
