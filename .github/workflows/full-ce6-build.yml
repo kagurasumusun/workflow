@@ -20,8 +20,8 @@ on:
       sysgen_defaults:
         description: 'Select catalog variables with DefaultValue=1 in addition to OSDesign selections'
         required: false
-        type: boolean
         default: false
+        type: boolean
   push:
     paths:
       - '.github/workflows/full-ce6-build.yml'
@@ -29,6 +29,8 @@ on:
 permissions:
   contents: read
 
+# Full CE6 validation always clones current private main branches and applies
+# the clean-room guard before any extraction or compilation work.
 jobs:
   full-ce6:
     runs-on: ubuntu-24.04
