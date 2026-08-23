@@ -12,23 +12,31 @@ on:
 permissions:
   contents: read
 
+# No concurrency group: every invocation runs independently.
+
 jobs:
   build:
     strategy:
       fail-fast: false
       max-parallel: 3
       matrix:
-        os: [ubuntu-latest, macos-latest, windows-2022]
+        include:
+          - name: ubuntu-cegcc
+            os: ubuntu-latest
+          - name: macos
+            os: macos-latest
+          - name: windows-msvc
+            os: windows-2022
     runs-on: ${{ matrix.os }}
     steps:
-      - name: Checkout wince-build
+      - name: Checkout private wince-build
         uses: actions/checkout@v4
         with:
           repository: kagurasumusun/wince-build
           ref: main
           token: ${{ secrets.WINCE_REPO_PAT }}
           path: wince-build
-      - name: Checkout wince-source
+      - name: Checkout private wince-source
         uses: actions/checkout@v4
         with:
           repository: kagurasumusun/wince-source
@@ -41,22 +49,52 @@ jobs:
           python-version: '3.12'
       - name: Install Ninja
         run: python -m pip install ninja
+      - name: Provision ceGCC
+        if: matrix.name == 'ubuntu-cegcc'
+        shell: bash
+        run: |
+          set -euxo pipefail
+          z="$RUNNER_TEMP/cegcc.zip"
+          curl -fsSL --retry 8 --retry-all-errors -o "$z" https://github.com/brain-hackers/cegcc-build/releases/download/2026-04-14-154823/cegcc-x86_64-2026-04-14-154823.zip
+          echo "3bcc5728ba1cc9c4d8cfabaed5c55650e0eacf2c3cf2b620d5739e99293ebb63  $z" | sha256sum -c -
+          mkdir -p "$RUNNER_TEMP/cegcc"
+          python -m zipfile -e "$z" "$RUNNER_TEMP/cegcc"
+          echo "WCE_CEGCC_DIR=$RUNNER_TEMP/cegcc/cegcc/bin" >> "$GITHUB_ENV"
+      - name: Setup MSVC
+        if: matrix.name == 'windows-msvc'
+        uses: ilammy/msvc-dev-cmd@v1
+      - name: Record MSVC
+        if: matrix.name == 'windows-msvc'
+        shell: pwsh
+        run: |
+          cl 2>&1 | Tee-Object cl-version.log
+          where.exe cl | Tee-Object -Append cl-version.log
+          where.exe link | Tee-Object -Append cl-version.log
       - name: Configure
         working-directory: wince-build
-        run: cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
+        shell: bash
+        run: |
+          cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release ${WCE_CEGCC_DIR:+-DWCE_CEGCC_DIR=$WCE_CEGCC_DIR}
       - name: Build
         working-directory: wince-build
-        run: cmake --build build --verbose 2>&1 | tee build.log
+        shell: bash
+        run: |
+          set -o pipefail
+          cmake --build build --verbose 2>&1 | tee build.log
       - name: Test
         working-directory: wince-build/build
-        run: ctest --output-on-failure 2>&1 | tee ../ctest.log
-      - name: Upload logs
+        shell: bash
+        run: |
+          set -o pipefail
+          ctest --output-on-failure 2>&1 | tee ../ctest.log
+      - name: Upload compiler/test logs
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: wince-build-${{ matrix.os }}-${{ github.run_id }}
+          name: wince-build-${{ matrix.name }}-${{ github.run_id }}
           path: |
             wince-build/build.log
             wince-build/ctest.log
+            wince-build/cl-version.log
           if-no-files-found: ignore
           retention-days: 14
