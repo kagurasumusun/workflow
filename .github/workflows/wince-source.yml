@@ -60,6 +60,7 @@ jobs:
           # This is only a transport/commit boundary; no source files are removed.
           BATCH_LIMIT=$((700 * 1024 * 1024))
           BATCH_FILE="$RUNNER_TEMP/ce6/batch-paths"
+          CHANGE_FILE="$RUNNER_TEMP/ce6/change-paths"
 
           push_batches() {
             local tag="$1"
@@ -67,6 +68,10 @@ jobs:
             local bytes=0
             local size
             local path
+
+            git diff --name-only -z -- ce600/ > "$CHANGE_FILE"
+            git ls-files -z --others --exclude-standard -- ce600/ >> "$CHANGE_FILE"
+            sort -zu "$CHANGE_FILE" -o "$CHANGE_FILE"
 
             : > "$BATCH_FILE"
 
@@ -98,10 +103,10 @@ jobs:
 
               printf '%s\0' "$path" >> "$BATCH_FILE"
               bytes=$((bytes + size))
-            done < <(git ls-files -z --others --exclude-standard ce600/)
+            done < "$CHANGE_FILE"
 
             if [ -s "$BATCH_FILE" ]; then
-              batch=$((batch + 1))
+              batch=$((batch + 1)
               git add --pathspec-from-file="$BATCH_FILE" --pathspec-file-nul
 
               if ! git diff --cached --quiet; then
