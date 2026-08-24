@@ -15,7 +15,7 @@ jobs:
         run: |
           set -euo pipefail
           sudo apt-get update
-          sudo apt-get install -y --no-install-recommends aria2 p7zip-full python3-pip
+          sudo apt-get install -y --no-install-recommends aria2 p7zip-full python3-olefile
           sudo apt-get clean
           sudo rm -rf /var/lib/apt/lists/*
 
@@ -31,8 +31,6 @@ jobs:
           git -c "http.extraheader=Authorization: Basic ${AUTH}" \
             clone --depth 1 --branch main \
             https://github.com/kagurasumusun/wince-source.git wince-source
-          cd wince-source
-          python3 -m pip install --break-system-packages -r scripts/requirements.txt
 
       - name: Download, extract and push CE6 media incrementally
         working-directory: wince-source
@@ -50,8 +48,8 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git config http.version HTTP/1.1
-          git config http.postBuffer 524288000
-          git config http.maxRequestBuffer 100M
+          git config gc.auto 0
+          git config maintenance.auto false
           git config pack.windowMemory 100m
           git config pack.packSizeLimit 100m
           git config pack.threads 2
@@ -83,8 +81,11 @@ jobs:
 
             rm -f "$iso"
 
-            git add ce600/
-            git diff --cached --quiet && return 0
+            git add -A ce600/
+            if git diff --cached --quiet; then
+              return 0
+            fi
+
             git commit -m "Import Windows CE 6.0 ${tag} source"
 
             for attempt in 1 2 3; do
