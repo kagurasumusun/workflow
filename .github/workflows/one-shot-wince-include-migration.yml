@@ -29,6 +29,7 @@ jobs:
         run: |
           from pathlib import Path
           import re
+          import shutil
 
           mapping = {
               "armasm.hpp": "toolchain/arm_asm.hpp",
@@ -70,12 +71,22 @@ jobs:
               "toolchain.hpp": "toolchain/toolchain.hpp",
           }
 
+          # The previous structural commit added the canonical trees but Git
+          # tree deletion does not recursively remove an old subtree when only
+          # its directory entry is nulled. Remove every legacy wrapper now.
+          legacy = Path("include/wce")
+          if legacy.exists():
+              shutil.rmtree(legacy)
+
           roots = ["src", "include", "tools", "tests"]
           text_ext = {".cpp", ".hpp", ".h", ".c", ".cc", ".cxx", ".cmake", ".md", ".txt", ".yml", ".yaml", ".py", ".sh", ".json", ".toml"}
 
           changed = []
           for root in roots:
-              for p in Path(root).rglob("*"):
+              base = Path(root)
+              if not base.exists():
+                  continue
+              for p in base.rglob("*"):
                   if not p.is_file() or p.suffix.lower() not in text_ext:
                       continue
                   try:
@@ -92,8 +103,6 @@ jobs:
                       p.write_text(new, encoding="utf-8")
                       changed.append(str(p))
 
-          # Remove the old namespace from documentation/comments as a layout
-          # reference where it is unambiguously a repository include path.
           for p in Path("docs").rglob("*.md"):
               old = p.read_text(encoding="utf-8")
               new = old.replace("include/wce/", "include/")
@@ -102,11 +111,12 @@ jobs:
                   p.write_text(new, encoding="utf-8")
                   changed.append(str(p))
 
-          # Hard fail if the repository still contains an active include using
-          # the removed public namespace.
           stale = []
           for root in roots:
-              for p in Path(root).rglob("*"):
+              base = Path(root)
+              if not base.exists():
+                  continue
+              for p in base.rglob("*"):
                   if not p.is_file() or p.suffix.lower() not in text_ext:
                       continue
                   text = p.read_text(encoding="utf-8", errors="ignore")
@@ -114,6 +124,9 @@ jobs:
                       stale.append(str(p))
           if stale:
               raise SystemExit("stale wce include paths remain:\n" + "\n".join(stale))
+
+          if Path("include/wce").exists():
+              raise SystemExit("legacy include/wce directory still exists")
 
           print("updated", len(changed), "files")
           for p in changed:
@@ -133,8 +146,6 @@ jobs:
 
       - name: Commit migration
         working-directory: wince-build
-        env:
-          GH_TOKEN: ${{ secrets.WINCE_REPO_PAT }}
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
@@ -145,8 +156,6 @@ jobs:
           git push origin HEAD:main
 
       - name: Remove one-shot workflow
-        env:
-          GH_TOKEN: ${{ secrets.WINCE_REPO_PAT }}
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
