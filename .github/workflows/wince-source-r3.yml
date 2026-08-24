@@ -1,0 +1,87 @@
+name: wince-source-r3
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  r3:
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Prepare runner
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends aria2 p7zip-full python3-olefile
+          sudo apt-get clean
+          sudo rm -rf /var/lib/apt/lists/*
+
+      - name: Clone wince-source
+        shell: bash
+        env:
+          WINCE_REPO_PAT: ${{ secrets.WINCE_REPO_PAT }}
+        run: |
+          set -euo pipefail
+          test -n "$WINCE_REPO_PAT"
+          AUTH=$(printf '%s:%s' 'kagurasumusun' "$WINCE_REPO_PAT" | base64 -w0)
+          git -c "http.extraheader=Authorization: Basic ${AUTH}" \
+            clone --depth 1 --branch main \
+            https://github.com/kagurasumusun/wince-source.git wince-source
+
+      - name: Download R3, extract into ce600 and push
+        working-directory: wince-source
+        shell: bash
+        env:
+          WINCE_REPO_PAT: ${{ secrets.WINCE_REPO_PAT }}
+          IA_R3: https://archive.org/download/windows-ce-6/CE6R3.iso
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/ce6" ce600
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git config http.version HTTP/1.1
+          git config gc.auto 0
+          git config maintenance.auto false
+          git config pack.windowMemory 64m
+          git config pack.packSizeLimit 100m
+          git config pack.threads 2
+
+          AUTH=$(printf '%s:%s' 'kagurasumusun' "$WINCE_REPO_PAT" | base64 -w0)
+          ISO="$RUNNER_TEMP/ce6/r3.iso"
+
+          aria2c \
+            --continue=true \
+            --max-connection-per-server=16 \
+            --split=16 \
+            --min-split-size=16M \
+            --file-allocation=none \
+            --auto-file-renaming=false \
+            --summary-interval=10 \
+            --console-log-level=notice \
+            --out=r3.iso \
+            --dir="$RUNNER_TEMP/ce6" \
+            "$IA_R3"
+
+          python3 scripts/ce6_lowdisk_driver.py \
+            --iso "r3=${ISO}" \
+            --scope source \
+            -o "$GITHUB_WORKSPACE/wince-source/ce600"
+
+          rm -f "$ISO"
+
+          git add -A ce600/
+          git diff --cached --quiet && exit 0
+          git commit -m "Import Windows CE 6.0 R3 source"
+
+          for attempt in 1 2 3; do
+            if git -c "http.extraheader=Authorization: Basic ${AUTH}" \
+              push origin HEAD:main; then
+              exit 0
+            fi
+            [ "$attempt" -lt 3 ] && sleep $((attempt * 15))
+          done
+          exit 1
