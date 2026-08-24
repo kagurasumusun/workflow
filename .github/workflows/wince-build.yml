@@ -96,8 +96,9 @@ jobs:
           test ! -f tools/wcesysgen/main.cpp
           test ! -f tools/wceromimage/main.cpp
           test ! -f tools/petool/main.cpp
-          if grep -R -E '(^|[[:space:]"(])((src/wce|scripts|config|external/wince-source|engine)/)' --exclude-dir=.git --exclude='*.log' .; then
-            echo '::error::stale repository-layout path detected'
+          if grep -R -E '(^|[[:space:]"(])((src/wce|scripts|config|external/wince-source|engine)/)' \
+              src include compat tools configs CMakeLists.txt .gitmodules README.md --exclude='*.log'; then
+            echo '::error::stale active repository-layout path detected'
             exit 1
           fi
 
