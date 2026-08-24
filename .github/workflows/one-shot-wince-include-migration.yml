@@ -1,4 +1,5 @@
 name: one-shot-wince-include-migration
+# pass 3: canonical include tree is now materialized as individual top-level blobs
 
 on:
   push:
@@ -71,17 +72,14 @@ jobs:
               "toolchain.hpp": "toolchain/toolchain.hpp",
           }
 
-          # The previous structural commit added the canonical trees but Git
-          # tree deletion does not recursively remove an old subtree when only
-          # its directory entry is nulled. Remove every legacy wrapper now.
           legacy = Path("include/wce")
           if legacy.exists():
               shutil.rmtree(legacy)
 
           roots = ["src", "include", "tools", "tests"]
           text_ext = {".cpp", ".hpp", ".h", ".c", ".cc", ".cxx", ".cmake", ".md", ".txt", ".yml", ".yaml", ".py", ".sh", ".json", ".toml"}
-
           changed = []
+
           for root in roots:
               base = Path(root)
               if not base.exists():
@@ -105,8 +103,7 @@ jobs:
 
           for p in Path("docs").rglob("*.md"):
               old = p.read_text(encoding="utf-8")
-              new = old.replace("include/wce/", "include/")
-              new = new.replace("include/wce`", "include`")
+              new = old.replace("include/wce/", "include/").replace("include/wce`", "include`")
               if new != old:
                   p.write_text(new, encoding="utf-8")
                   changed.append(str(p))
@@ -124,7 +121,6 @@ jobs:
                       stale.append(str(p))
           if stale:
               raise SystemExit("stale wce include paths remain:\n" + "\n".join(stale))
-
           if Path("include/wce").exists():
               raise SystemExit("legacy include/wce directory still exists")
 
@@ -149,7 +145,6 @@ jobs:
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git status --short
           git add -A
           git diff --cached --check
           git commit -m "refactor: normalize repository include graph" || exit 0
