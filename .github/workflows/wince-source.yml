@@ -19,41 +19,25 @@ jobs:
           sudo apt-get clean
           sudo rm -rf /var/lib/apt/lists/*
 
-      - name: Clone extraction repository
+      - name: Clone wince-source
         shell: bash
         env:
           WINCE_REPO_PAT: ${{ secrets.WINCE_REPO_PAT }}
         run: |
           set -euo pipefail
           test -n "$WINCE_REPO_PAT"
+          rm -rf wince-source
           export GIT_CONFIG_COUNT=1
           export GIT_CONFIG_KEY_0=http.https://github.com/.extraheader
           export GIT_CONFIG_VALUE_0="Authorization: Bearer ${WINCE_REPO_PAT}"
-          git clone --depth 1 --branch main https://github.com/kagurasumusun/wince-source.git extractor
-          cd extractor
+          git clone --depth 1 --branch main \
+            https://github.com/kagurasumusun/wince-source.git wince-source
+          unset GIT_CONFIG_VALUE_0 GIT_CONFIG_KEY_0 GIT_CONFIG_COUNT
+          cd wince-source
           python3 -m pip install --break-system-packages -r scripts/requirements.txt
-          cd ..
-          unset GIT_CONFIG_VALUE_0 GIT_CONFIG_KEY_0 GIT_CONFIG_COUNT
 
-      - name: Clone destination repository
-        shell: bash
-        env:
-          WINCE_REPO_PAT: ${{ secrets.WINCE_REPO_PAT }}
-        run: |
-          set -euo pipefail
-          test -n "$WINCE_REPO_PAT"
-          rm -rf wince-sources
-          export GIT_CONFIG_COUNT=1
-          export GIT_CONFIG_KEY_0=http.https://github.com/.extraheader
-          export GIT_CONFIG_VALUE_0="Authorization: Bearer ${WINCE_REPO_PAT}"
-          git clone --depth 1 --branch main https://github.com/kagurasumusun/wince-sources.git wince-sources
-          cd wince-sources
-          git config core.autocrlf false
-          git config core.filemode false
-          cd ..
-          unset GIT_CONFIG_VALUE_0 GIT_CONFIG_KEY_0 GIT_CONFIG_COUNT
-
-      - name: Download and extract each ISO sequentially
+      - name: Download and extract CE6 media into wince-source/ce600
+        working-directory: wince-source
         shell: bash
         env:
           IA_BASE: https://archive.org/download/windows-ce-6/en_windows_embedded_ce_6.0_dvd.iso
@@ -61,8 +45,8 @@ jobs:
           IA_R3: https://archive.org/download/windows-ce-6/CE6R3.iso
         run: |
           set -euo pipefail
-          rm -rf wince-sources/.*ce6* wince-sources/ce600
-          mkdir -p "$RUNNER_TEMP/ce6"
+          rm -rf ce600
+          mkdir -p "$RUNNER_TEMP/ce6" ce600
 
           download_extract() {
             local tag="$1"
@@ -82,10 +66,10 @@ jobs:
               --dir="$RUNNER_TEMP/ce6" \
               "$url"
 
-            python3 extractor/scripts/ce6_lowdisk_driver.py \
+            python3 scripts/ce6_lowdisk_driver.py \
               --iso "${tag}=${iso}" \
               --scope source \
-              -o "$GITHUB_WORKSPACE/wince-sources"
+              -o "$GITHUB_WORKSPACE/wince-source/ce600"
 
             rm -f "$iso"
           }
@@ -94,19 +78,18 @@ jobs:
           download_extract r2 "$IA_R2"
           download_extract r3 "$IA_R3"
 
-      - name: Commit and push full source tree
-        working-directory: wince-sources
+      - name: Commit and push ce600
+        working-directory: wince-source
         shell: bash
         env:
           WINCE_REPO_PAT: ${{ secrets.WINCE_REPO_PAT }}
         run: |
           set -euo pipefail
           test -n "$WINCE_REPO_PAT"
-          git add -A
+          git add ce600/
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git commit -m "Update full Windows CE 6.0 source tree" \
-            -m "Extracted from CE6 base, R2 and R3 media in update order."
+          git commit -m "Update full Windows CE 6.0 source tree"
           export GIT_CONFIG_COUNT=1
           export GIT_CONFIG_KEY_0=http.https://github.com/.extraheader
           export GIT_CONFIG_VALUE_0="Authorization: Bearer ${WINCE_REPO_PAT}"
