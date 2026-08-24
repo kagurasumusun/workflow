@@ -8,7 +8,7 @@ on:
         required: true
         type: string
       osdesign:
-        description: 'Optional .pbxml path relative to ce600; leave empty for unique OSDesign'
+        description: 'Optional .pbxml path relative to ce600'
         required: false
         default: ''
         type: string
@@ -18,13 +18,10 @@ on:
         default: ARMV4I
         type: string
       sysgen_defaults:
-        description: 'Select catalog variables with DefaultValue=1 in addition to OSDesign selections'
+        description: 'Use catalog DefaultValue=1 SYSGEN variables when no OS Design is supplied'
         required: false
         default: false
         type: boolean
-  push:
-    paths:
-      - '.github/workflows/full-ce6-build.yml'
 
 permissions:
   contents: read
@@ -34,159 +31,104 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 360
     steps:
-      - name: Clone private repositories
+      - name: Checkout build platform and CE source
         shell: bash
-        env:
-          WINCE_REPO_PAT: ${{ secrets.WINCE_REPO_PAT }}
         run: |
           set -euo pipefail
-          test -n "$WINCE_REPO_PAT"
-          rm -rf wince-source wince-build
-          export GIT_TERMINAL_PROMPT=0
-          export GIT_CONFIG_COUNT=1
-          export GIT_CONFIG_KEY_0=credential.helper
-          export GIT_CONFIG_VALUE_0='!f() { echo username=x-access-token; echo "password=$WINCE_REPO_PAT"; }; f'
-          git clone --depth 1 --branch main https://github.com/kagurasumusun/wince-source.git wince-source
           git clone --depth 1 --branch main https://github.com/kagurasumusun/wince-build.git wince-build
-          unset GIT_CONFIG_VALUE_0 GIT_CONFIG_KEY_0 GIT_CONFIG_COUNT
-          BUILD_SHA="$(git -C wince-build rev-parse HEAD)"
-          SOURCE_SHA="$(git -C wince-source rev-parse HEAD)"
-          echo "wince-source=$SOURCE_SHA" | tee revisions.txt
-          echo "wince-build=$BUILD_SHA" | tee -a revisions.txt
-          git -C wince-build show -s --format='%H %s' "$BUILD_SHA" | tee -a revisions.txt
-          grep -n 'CE e32_rom must be 106 bytes' wince-build/engine/include/wce/romimage.hpp
-          grep -n 'kernel_dll_address' wince-build/engine/include/wce/romimage.hpp
+          git clone --depth 1 --branch main https://github.com/kagurasumusun/wince-source.git wince-source
+          git -C wince-build rev-parse HEAD | tee revisions.txt
+          git -C wince-source rev-parse HEAD | tee -a revisions.txt
+          test -d wince-source/ce600/PUBLIC
+          test -d wince-source/ce600/PRIVATE
+          test -d wince-source/ce600/PLATFORM
 
       - name: Free disposable runner disk
         shell: bash
         run: |
           set -euxo pipefail
           sudo rm -rf /usr/local/lib/android /usr/local/share/powershell /opt/ghc \
-                      /usr/local/share/chromium /usr/local/lib/node_modules || true
+            /usr/local/share/chromium /usr/local/lib/node_modules || true
           df -h /
 
-      - uses: actions/setup-python@v5
-        with:
-          python-version: '3.12'
-
-      - name: Install extraction/build dependencies
+      - name: Install build dependencies
+        shell: bash
         run: |
           set -euxo pipefail
           sudo apt-get update
-          sudo apt-get install -y aria2 p7zip-full patchelf python3-pip
-          python -m pip install ninja
-          python -m pip install -r wince-source/scripts/requirements.txt
+          sudo apt-get install -y ninja-build
 
-      - name: Download and extract CE6 media sequentially on one runner
-        shell: bash
-        run: |
-          set -euxo pipefail
-          rm -rf ce6-media ce600
-          mkdir -p ce6-media ce600
-          download_and_extract() {
-            local tag="$1"
-            local name="$2"
-            local url="$3"
-            local iso="ce6-media/$name"
-            aria2c --continue=true --allow-overwrite=true --auto-file-renaming=false \
-              --max-connection-per-server=16 --split=16 --min-split-size=8M \
-              --max-concurrent-downloads=1 --file-allocation=none \
-              --disk-cache=64M --timeout=30 --connect-timeout=15 \
-              --max-tries=12 --retry-wait=2 --summary-interval=5 \
-              --console-log-level=warn --out="$name" "$url"
-            mv -f "$name" "$iso"
-            test -s "$iso"
-            python3 wince-source/scripts/ce6_lowdisk_driver.py \
-              --iso "$tag=$iso" --scope all -o ce600
-            test -s ce600/manifest.json
-            rm -f "$iso"
-            df -h /
-          }
-          download_and_extract base en_windows_embedded_ce_6.0_dvd.iso \
-            https://archive.org/download/windows-ce-6/en_windows_embedded_ce_6.0_dvd.iso
-          download_and_extract r2 CE6R2.iso \
-            https://archive.org/download/windows-ce-6/CE6R2.iso
-          download_and_extract r3 CE6R3.iso \
-            https://archive.org/download/windows-ce-6/CE6R3.iso
-          test -d ce600/PUBLIC
-          test -d ce600/PRIVATE
-          test -d ce600/PLATFORM
-          python3 - <<'PY'
-          import json
-          with open('ce600/manifest.json', encoding='utf-8') as f:
-              m = json.load(f)
-          assert len(m.get('isos', [])) == 3, m.get('isos')
-          assert m.get('count', 0) > 100000, m.get('count')
-          print('extracted files:', m['count'])
-          PY
-          rm -rf ce6-media
-          df -h /
-
-      - name: Provision pinned ceGCC 0.59.1 / GCC 4.4.0
+      - name: Configure and build wince-build
         working-directory: wince-build
         shell: bash
         run: |
           set -euxo pipefail
-          chmod +x scripts/provision-cegcc.sh
-          scripts/provision-cegcc.sh "$RUNNER_TEMP/mingw32ce"
-          "$RUNNER_TEMP/mingw32ce/bin/arm-mingw32ce-gcc" --version | head -1 | tee ../cegcc-version.log
-          echo "WCE_CEGCC_DIR=$RUNNER_TEMP/mingw32ce/bin" >> "$GITHUB_ENV"
-
-      - name: Configure and build engine
-        working-directory: wince-build
-        shell: bash
-        run: |
-          set -euxo pipefail
-          cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DWCE_CEGCC_DIR="$WCE_CEGCC_DIR"
-          set -o pipefail
-          cmake --build build --parallel 2 --verbose 2>&1 | tee ../wcebuild-build.log
+          cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
+          cmake --build build --parallel 4 --verbose 2>&1 | tee ../wcebuild-build.log
           ctest --test-dir build --output-on-failure --parallel 2 2>&1 | tee ../wcebuild-ctest.log
 
-      - name: Run actual CE6 full build through ROMIMAGE
+      - name: Verify current tool layout
+        working-directory: wince-build
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -x build/tools/wcefullbuild || test -x build/wcefullbuild
+          test -x build/tools/petool || test -x build/petool
+          test ! -d engine
+          grep -R 'engine/' --exclude-dir=.git --exclude='*.log' . && exit 1 || true
+
+      - name: Run real CE6 build through the unified pipeline
         shell: bash
         env:
           CE_PLATFORM: ${{ inputs.platform }}
           CE_CPU: ${{ inputs.cpu }}
           CE_OSDESIGN: ${{ inputs.osdesign }}
           CE_DEFAULTS: ${{ inputs.sysgen_defaults }}
-          EVENT_NAME: ${{ github.event_name }}
         run: |
           set -euo pipefail
-          ENGINE="$PWD/wince-build/build/wcefullbuild"
-          test -x "$ENGINE"
-          ARGS=(--root "$PWD/ce600" --out "$PWD/full-ce6-out" --toolchain cegcc --cpu "$CE_CPU" --platform "$CE_PLATFORM" --allow-missing-dirs-file "$PWD/wince-build/config/allow-missing-dirs.oak-coreos.txt" --allow-missing-dirs-file "$PWD/wince-build/config/allow-missing-dirs.full-tree.txt")
-          if [[ "$EVENT_NAME" == "workflow_dispatch" ]]; then
-            if [[ -n "$CE_OSDESIGN" ]]; then
-              test -f "$PWD/ce600/$CE_OSDESIGN"
-              ARGS+=(--osdesign "$PWD/ce600/$CE_OSDESIGN")
-            elif [[ "$CE_DEFAULTS" == "true" ]]; then
-              ARGS+=(--sysgen-defaults)
-            else
-              echo 'No OSDesign and sysgen_defaults=false; refusing an under-specified build.' >&2
-              exit 2
-            fi
+          ENGINE=""
+          for candidate in \
+            "$PWD/wince-build/build/tools/wcefullbuild" \
+            "$PWD/wince-build/build/wcefullbuild"; do
+            if [ -x "$candidate" ]; then ENGINE="$candidate"; break; fi
+          done
+          test -n "$ENGINE"
+
+          ARGS=(
+            --root "$PWD/wince-source/ce600"
+            --out "$PWD/full-ce6-out"
+            --toolchain cegcc
+            --cpu "$CE_CPU"
+            --platform "$CE_PLATFORM"
+          )
+
+          if [ -n "$CE_OSDESIGN" ]; then
+            test -f "$PWD/wince-source/ce600/$CE_OSDESIGN"
+            ARGS+=(--osdesign "$PWD/wince-source/ce600/$CE_OSDESIGN")
+          elif [ "$CE_DEFAULTS" = true ]; then
+            ARGS+=(--sysgen-defaults)
           else
-            echo 'Full CE6 build requires workflow_dispatch inputs.'
+            echo 'No OS Design and sysgen_defaults=false; refusing an under-specified build.' >&2
             exit 2
           fi
-          set -o pipefail
+
           "$ENGINE" "${ARGS[@]}" 2>&1 | tee full-ce6-build.log
+
           test -s full-ce6-out/build.ninja
-          test -s full-ce6-out/merged.bib
           test -s full-ce6-out/ceconfig.h
+          test -s full-ce6-out/merged.bib
           test -s full-ce6-out/release/default.hv
           test -s full-ce6-out/release/merged.reg
           test -s full-ce6-out/release/NK.BIN
           sha256sum full-ce6-out/release/NK.BIN | tee nkbin.sha256
 
-      - name: Upload compact diagnostics and final image
+      - name: Upload diagnostics and NK.BIN
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: full-ce6-${{ github.run_id }}
           path: |
             revisions.txt
-            cegcc-version.log
             wcebuild-build.log
             wcebuild-ctest.log
             full-ce6-build.log
@@ -194,4 +136,3 @@ jobs:
             full-ce6-out/release/NK.BIN
           if-no-files-found: ignore
           retention-days: 14
-          compression-level: 6
