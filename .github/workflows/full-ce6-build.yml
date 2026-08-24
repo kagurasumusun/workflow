@@ -72,10 +72,15 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          test -x build/tools/wcefullbuild || test -x build/wcefullbuild
-          test -x build/tools/petool || test -x build/petool
+          test -x build/wcefullbuild
+          test -x build/petool
+          test ! -d src/wce
+          test ! -d scripts
+          test ! -d config
+          test ! -d external
           test ! -d engine
-          grep -R 'engine/' --exclude-dir=.git --exclude='*.log' . && exit 1 || true
+          test -d third_party/wince-source
+          test -s docs/REPOSITORY-ARCHITECTURE.md
 
       - name: Run real CE6 build through the unified pipeline
         shell: bash
@@ -86,13 +91,8 @@ jobs:
           CE_DEFAULTS: ${{ inputs.sysgen_defaults }}
         run: |
           set -euo pipefail
-          ENGINE=""
-          for candidate in \
-            "$PWD/wince-build/build/tools/wcefullbuild" \
-            "$PWD/wince-build/build/wcefullbuild"; do
-            if [ -x "$candidate" ]; then ENGINE="$candidate"; break; fi
-          done
-          test -n "$ENGINE"
+          ENGINE="$PWD/wince-build/build/wcefullbuild"
+          test -x "$ENGINE"
 
           ARGS=(
             --root "$PWD/wince-source/ce600"

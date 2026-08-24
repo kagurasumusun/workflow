@@ -61,25 +61,59 @@ jobs:
           set -o pipefail
           ctest --test-dir build --output-on-failure --verbose 2>&1 | tee ctest.log
 
-      - name: Verify professional repository boundaries
+      - name: Verify repository architecture
         working-directory: wince-build
         shell: bash
         run: |
           set -euo pipefail
-          test -d src
+          test -d src/model
+          test -d src/frontend
+          test -d src/build
+          test -d src/toolchain
+          test -d src/sysgen
+          test -d src/image
+          test -d src/bsp
+          test -d src/sdk
           test -d include
           test -d compat
-          test -d tools
+          test -d tools/cli
+          test -d tools/inspection
+          test -d tools/source
+          test -d tools/toolchain
+          test -d tools/verification
+          test -d configs
           test -d tests
-          test -d config
           test -d docs
-          test -d external/wince-source
+          test -d third_party/wince-source
+          test ! -d src/wce
+          test ! -d config
+          test ! -d scripts
+          test ! -d external
           test ! -d engine
           test ! -d .github/workflows
-          if grep -R 'engine/' --exclude-dir=.git --exclude='*.log' .; then
-            echo '::error::stale engine/ path detected'
+          test ! -f tools/wcebuild/main.cpp
+          test ! -f tools/wcefullbuild/main.cpp
+          test ! -f tools/wcesysgen/main.cpp
+          test ! -f tools/wceromimage/main.cpp
+          test ! -f tools/petool/main.cpp
+          if grep -R -E '(^|[[:space:]"(])((src/wce|scripts|config|external/wince-source|engine)/)' --exclude-dir=.git --exclude='*.log' .; then
+            echo '::error::stale repository-layout path detected'
             exit 1
           fi
+
+      - name: Verify public architecture contract
+        working-directory: wince-build
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -s docs/REPOSITORY-ARCHITECTURE.md
+          test -s docs/HANDOFF.md
+          test -s docs/PROJECT-HISTORY.md
+          grep -q 'Ninja' docs/HANDOFF.md
+          grep -q 'SYSGEN' docs/HANDOFF.md
+          grep -q 'ROMIMAGE' docs/HANDOFF.md
+          grep -q 'NK.BIN' docs/HANDOFF.md
+          grep -q 'winde' docs/HANDOFF.md
 
       - name: Upload diagnostics
         if: always()

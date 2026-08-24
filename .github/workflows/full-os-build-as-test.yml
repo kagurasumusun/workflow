@@ -59,16 +59,29 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          for candidate in \
-            "$PWD/wince-build/build/tools/wcefullbuild" \
-            "$PWD/wince-build/build/wcefullbuild"; do
-            if [ -x "$candidate" ]; then
-              echo "WCE_FULLBUILD=$candidate" >> "$GITHUB_ENV"
-              exit 0
-            fi
-          done
-          echo '::error::wcefullbuild was not produced'
-          exit 1
+          test -x "$PWD/wince-build/build/wcefullbuild"
+          echo "WCE_FULLBUILD=$PWD/wince-build/build/wcefullbuild" >> "$GITHUB_ENV"
+
+      - name: Verify repository architecture
+        working-directory: wince-build
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -d src/model
+          test -d src/frontend
+          test -d src/build
+          test -d src/toolchain
+          test -d src/sysgen
+          test -d src/image
+          test -d tools/cli
+          test -d tools/inspection
+          test -d configs
+          test -d third_party/wince-source
+          test ! -d src/wce
+          test ! -d scripts
+          test ! -d config
+          test ! -d external
+          test ! -d engine
 
       - name: Run real-tree CE build through the complete pipeline
         shell: bash
