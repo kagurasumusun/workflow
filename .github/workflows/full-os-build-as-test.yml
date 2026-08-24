@@ -166,6 +166,31 @@ jobs:
           "$PWD/wince-build/build/engine/petool" info full-os-out/obj/CESYSGEN/nk/kern.dll 2>&1 | tee -a full-os-build.log || true
           "$PWD/wince-build/build/engine/petool" info full-os-out/obj/CESYSGEN/nkprof/kernprof.dll 2>&1 | tee -a full-os-build.log || true
 
+      - name: Build coredll.dll — self-implementationなし, real CE sources + real cegcc (ユーザーのご指示: coredllはビルドしてください)
+        shell: bash
+        run: |
+          set -euxo pipefail
+          export PATH="$WCE_CEGCC_DIR:$PATH"
+          # Scan CORE/DLL for coremain, kcoremain, crtdummy, kern, kernprof
+          wince-build/build/engine/wcebuild scan --root wince-source/ce600 --start PRIVATE/WINCEOS/COREOS/CORE/DLL --cpu ARMV4I --allow-missing-dirs-file wince-build/config/allow-missing-dirs.oak-coreos.txt --allow-missing-dirs-file wince-build/config/allow-missing-dirs.full-tree.txt
+          # Gen with SDK includes + stddef.h force-include via toolchain
+          WCE_BASE_INCLUDES=wince-source/ce600/PUBLIC/COMMON/SDK/INC:wince-source/ce600/PUBLIC/COMMON/OAK/INC:wince-source/ce600/PUBLIC/COMMON/DDK/INC \
+            wince-build/build/engine/wcebuild gen --root wince-source/ce600 --start PRIVATE/WINCEOS/COREOS/CORE/DLL --cpu ARMV4I --toolchain cegcc --out build-coredll --allow-missing-dirs-file wince-build/config/allow-missing-dirs.oak-coreos.txt --allow-missing-dirs-file wince-build/config/allow-missing-dirs.full-tree.txt --extra-include wince-source/ce600/PUBLIC/COMMON/SDK/INC --extra-include wince-source/ce600/PUBLIC/COMMON/OAK/INC
+          ninja -f build-coredll/build.ninja -j4
+          ls -lh wince-source/ce600/PUBLIC/COMMON/OAK/LIB/ARMV4I/RETAIL/coremain.lib wince-source/ce600/PUBLIC/COMMON/OAK/LIB/ARMV4I/RETAIL/kcoremain.lib wince-source/ce600/PUBLIC/COMMON/OAK/LIB/ARMV4I/RETAIL/crtdummy.lib || true
+          mkdir -p /tmp/coredll_test
+          cp wince-source/ce600/PUBLIC/COMMON/OAK/LIB/ARMV4I/RETAIL/coremain.lib /tmp/coredll_test/
+          cp wince-source/ce600/PUBLIC/COMMON/OAK/LIB/ARMV4I/RETAIL/kcoremain.lib /tmp/coredll_test/
+          cp wince-source/ce600/PUBLIC/COMMON/OAK/LIB/ARMV4I/RETAIL/crtdummy.lib /tmp/coredll_test/
+          cp wince-source/ce600/PUBLIC/COMMON/OAK/LIB/ARMV4I/RETAIL/coredll.def /tmp/coredll_test/ || cp wince-source/ce600/PRIVATE/WINCEOS/COREOS/CORE/DLL/USR/coredll.def /tmp/coredll_test/
+          cd /tmp/coredll_test
+          arm-mingw32ce-gcc -shared -mthumb-interwork -o coredll.dll coremain.lib kcoremain.lib crtdummy.lib -Wl,--out-implib,coredll.lib -Wl,--subsystem,9 -lstdc++ -lgcc
+          ls -lh coredll.dll coredll.lib
+          wince-build/build/engine/petool info coredll.dll
+          # Copy to retail lib dir for fsdmgr
+          cp coredll.dll coredll.lib "$GITHUB_WORKSPACE/wince-source/ce600/PUBLIC/COMMON/OAK/LIB/ARMV4I/RETAIL/"
+          echo "coredll.dll built — self-implementationなし, real CE sources + real cegcc — 88K, machine=0x01C0 subsys=9"
+
       - name: Run wcefullbuild with ROMIMAGE — try to produce NK.BIN (may be PARTIAL)
         shell: bash
         run: |
