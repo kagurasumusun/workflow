@@ -87,5 +87,4 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git commit -m "Update full Windows CE 6.0 source tree"
-          git -c "http.extraheader=Authorization: Bearer ${WINCE_REPO_PAT}" \
-            push origin HEAD:main
+          git -c "http.extraheader=Authorization: Bearer ${WINCE_REPO_PAT}" push origin HEAD:main
