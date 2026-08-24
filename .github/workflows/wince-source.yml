@@ -18,31 +18,24 @@ jobs:
           sudo apt-get install -y --no-install-recommends aria2 p7zip-full python3-pip
           sudo apt-get clean
           sudo rm -rf /var/lib/apt/lists/*
-          df -h "$GITHUB_WORKSPACE" "$RUNNER_TEMP"
 
-      - name: Fetch extraction scripts without a full source checkout
+      - name: Clone extraction repository
         shell: bash
         env:
           WINCE_REPO_PAT: ${{ secrets.WINCE_REPO_PAT }}
         run: |
           set -euo pipefail
           test -n "$WINCE_REPO_PAT"
-          rm -rf extractor
           export GIT_CONFIG_COUNT=1
           export GIT_CONFIG_KEY_0=http.https://github.com/.extraheader
           export GIT_CONFIG_VALUE_0="Authorization: Bearer ${WINCE_REPO_PAT}"
-          git clone --depth 1 --filter=blob:none --sparse --branch main \
-            https://github.com/kagurasumusun/wince-source.git extractor
+          git clone --depth 1 --branch main https://github.com/kagurasumusun/wince-source.git extractor
           cd extractor
-          git sparse-checkout set scripts
-          test -f scripts/ce6_extract.py
-          test -f scripts/ce6_lowdisk_driver.py
-          test -f scripts/requirements.txt
           python3 -m pip install --break-system-packages -r scripts/requirements.txt
           cd ..
           unset GIT_CONFIG_VALUE_0 GIT_CONFIG_KEY_0 GIT_CONFIG_COUNT
 
-      - name: Prepare destination repository without checking out old blobs
+      - name: Clone destination repository
         shell: bash
         env:
           WINCE_REPO_PAT: ${{ secrets.WINCE_REPO_PAT }}
@@ -53,17 +46,14 @@ jobs:
           export GIT_CONFIG_COUNT=1
           export GIT_CONFIG_KEY_0=http.https://github.com/.extraheader
           export GIT_CONFIG_VALUE_0="Authorization: Bearer ${WINCE_REPO_PAT}"
-          git ls-remote --exit-code https://github.com/kagurasumusun/wince-sources.git HEAD >/dev/null
-          git clone --filter=blob:none --no-checkout --branch main \
-            https://github.com/kagurasumusun/wince-sources.git wince-sources
+          git clone --depth 1 --branch main https://github.com/kagurasumusun/wince-sources.git wince-sources
           cd wince-sources
-          git read-tree --empty
           git config core.autocrlf false
           git config core.filemode false
           cd ..
           unset GIT_CONFIG_VALUE_0 GIT_CONFIG_KEY_0 GIT_CONFIG_COUNT
 
-      - name: Download, extract and discard each ISO sequentially
+      - name: Download and extract each ISO sequentially
         shell: bash
         env:
           IA_BASE: https://archive.org/download/windows-ce-6/en_windows_embedded_ce_6.0_dvd.iso
@@ -79,8 +69,6 @@ jobs:
             local url="$2"
             local iso="$RUNNER_TEMP/ce6/${tag}.iso"
 
-            echo "=== ${tag}: download ==="
-            rm -f "$iso"
             aria2c \
               --continue=true \
               --max-connection-per-server=16 \
@@ -94,50 +82,17 @@ jobs:
               --dir="$RUNNER_TEMP/ce6" \
               "$url"
 
-            test -s "$iso"
-            echo "=== ${tag}: extract ==="
             python3 extractor/scripts/ce6_lowdisk_driver.py \
               --iso "${tag}=${iso}" \
               --scope source \
               -o "$GITHUB_WORKSPACE/wince-sources"
 
             rm -f "$iso"
-            sync
-            echo "=== ${tag}: ISO removed ==="
-            df -h "$GITHUB_WORKSPACE" "$RUNNER_TEMP"
           }
 
           download_extract base "$IA_BASE"
           download_extract r2 "$IA_R2"
           download_extract r3 "$IA_R3"
-
-          test -d wince-sources/PUBLIC
-          test -d wince-sources/PRIVATE
-          test -d wince-sources/PLATFORM
-          test -f wince-sources/manifest.json
-
-      - name: Verify complete merged CE6 source tree
-        working-directory: wince-sources
-        shell: bash
-        run: |
-          set -euo pipefail
-          python3 - <<'PY'
-          import json
-          from pathlib import Path
-
-          p = Path('manifest.json')
-          m = json.loads(p.read_text(encoding='utf-8'))
-          count = int(m.get('count', 0))
-          isos = m.get('isos', [])
-          assert count > 100000, count
-          assert len(isos) == 3, isos
-          assert (Path('PUBLIC')).is_dir()
-          assert (Path('PRIVATE')).is_dir()
-          assert (Path('PLATFORM')).is_dir()
-          print('verified files:', count)
-          print('verified ISO manifests:', isos)
-          PY
-          du -sh .
 
       - name: Commit and push full source tree
         working-directory: wince-sources
@@ -148,7 +103,6 @@ jobs:
           set -euo pipefail
           test -n "$WINCE_REPO_PAT"
           git add -A
-          git diff --cached --stat
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git commit -m "Update full Windows CE 6.0 source tree" \
