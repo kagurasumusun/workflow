@@ -1,0 +1,156 @@
+name: one-shot-wince-include-migration
+
+on:
+  push:
+    paths:
+      - .github/workflows/one-shot-wince-include-migration.yml
+
+permissions:
+  contents: write
+
+jobs:
+  migrate:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout workflow repository
+        uses: actions/checkout@v4
+
+      - name: Checkout wince-build
+        uses: actions/checkout@v4
+        with:
+          repository: kagurasumusun/wince-build
+          token: ${{ secrets.WINCE_REPO_PAT }}
+          path: wince-build
+          fetch-depth: 0
+
+      - name: Rewrite canonical include graph
+        working-directory: wince-build
+        shell: python
+        run: |
+          from pathlib import Path
+          import re
+
+          mapping = {
+              "armasm.hpp": "toolchain/arm_asm.hpp",
+              "bdproc.hpp": "frontend/build_directives.hpp",
+              "bsp.hpp": "bsp/bsp.hpp",
+              "buildvalidate.hpp": "build/build_validation.hpp",
+              "catalog.hpp": "sysgen/catalog.hpp",
+              "cecompress.hpp": "toolchain/ce_compression.hpp",
+              "ceinc.hpp": "frontend/include_transform.hpp",
+              "ceinc_tables.hpp": "frontend/include_transform_rules.hpp",
+              "cifs.hpp": "frontend/cifs.hpp",
+              "envseed.hpp": "build/environment.hpp",
+              "err.hpp": "core/error.hpp",
+              "fullbuild.hpp": "build/full_build.hpp",
+              "graph.hpp": "model/graph.hpp",
+              "macros.hpp": "core/macros.hpp",
+              "model.hpp": "model/model.hpp",
+              "msbin.hpp": "toolchain/msbin.hpp",
+              "multixip.hpp": "image/multi_xip.hpp",
+              "ninjaemit.hpp": "build/ninja_emitter.hpp",
+              "pbxml.hpp": "frontend/pbxml.hpp",
+              "pe_reloc.hpp": "toolchain/pe_relocation.hpp",
+              "pefixup.hpp": "toolchain/pe_fixup.hpp",
+              "refverify.hpp": "image/reference_verify.hpp",
+              "registry.hpp": "sysgen/registry.hpp",
+              "registry_hive.hpp": "sysgen/registry_hive.hpp",
+              "romcompress.hpp": "image/rom_compression.hpp",
+              "romconfig.hpp": "image/rom_config.hpp",
+              "romimage.hpp": "image/rom_image.hpp",
+              "romoutput.hpp": "image/rom_output.hpp",
+              "sdk.hpp": "sdk/sdk.hpp",
+              "srcshadow.hpp": "frontend/source_shadow.hpp",
+              "sysgen.hpp": "sysgen/sysgen.hpp",
+              "sysgen_catalog.hpp": "sysgen/catalog_model.hpp",
+              "sysgen_modules.hpp": "sysgen/module_model.hpp",
+              "sysgen_output.hpp": "sysgen/output.hpp",
+              "sysgen_sections.hpp": "sysgen/sections.hpp",
+              "text.hpp": "core/text.hpp",
+              "toolchain.hpp": "toolchain/toolchain.hpp",
+          }
+
+          roots = ["src", "include", "tools", "tests"]
+          text_ext = {".cpp", ".hpp", ".h", ".c", ".cc", ".cxx", ".cmake", ".md", ".txt", ".yml", ".yaml", ".py", ".sh", ".json", ".toml"}
+
+          changed = []
+          for root in roots:
+              for p in Path(root).rglob("*"):
+                  if not p.is_file() or p.suffix.lower() not in text_ext:
+                      continue
+                  try:
+                      old = p.read_text(encoding="utf-8")
+                  except UnicodeDecodeError:
+                      continue
+                  new = old
+                  for old_name, new_name in mapping.items():
+                      new = new.replace(f'"wce/{old_name}"', f'<{new_name}>')
+                      new = new.replace(f'<wce/{old_name}>', f'<{new_name}>')
+                      new = new.replace(f'"../wce/{old_name}"', f'<{new_name}>')
+                  new = new.replace("include/wce/", "include/")
+                  if new != old:
+                      p.write_text(new, encoding="utf-8")
+                      changed.append(str(p))
+
+          # Remove the old namespace from documentation/comments as a layout
+          # reference where it is unambiguously a repository include path.
+          for p in Path("docs").rglob("*.md"):
+              old = p.read_text(encoding="utf-8")
+              new = old.replace("include/wce/", "include/")
+              new = new.replace("include/wce`", "include`")
+              if new != old:
+                  p.write_text(new, encoding="utf-8")
+                  changed.append(str(p))
+
+          # Hard fail if the repository still contains an active include using
+          # the removed public namespace.
+          stale = []
+          for root in roots:
+              for p in Path(root).rglob("*"):
+                  if not p.is_file() or p.suffix.lower() not in text_ext:
+                      continue
+                  text = p.read_text(encoding="utf-8", errors="ignore")
+                  if re.search(r'#\s*include\s*[<"]wce/', text):
+                      stale.append(str(p))
+          if stale:
+              raise SystemExit("stale wce include paths remain:\n" + "\n".join(stale))
+
+          print("updated", len(changed), "files")
+          for p in changed:
+              print(p)
+
+      - name: Validate CMake configure
+        working-directory: wince-build
+        run: cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Debug
+
+      - name: Build
+        working-directory: wince-build
+        run: cmake --build build --parallel 2
+
+      - name: Test
+        working-directory: wince-build
+        run: ctest --test-dir build --output-on-failure
+
+      - name: Commit migration
+        working-directory: wince-build
+        env:
+          GH_TOKEN: ${{ secrets.WINCE_REPO_PAT }}
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git status --short
+          git add -A
+          git diff --cached --check
+          git commit -m "refactor: normalize repository include graph" || exit 0
+          git push origin HEAD:main
+
+      - name: Remove one-shot workflow
+        env:
+          GH_TOKEN: ${{ secrets.WINCE_REPO_PAT }}
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          rm -f .github/workflows/one-shot-wince-include-migration.yml
+          git add .github/workflows/one-shot-wince-include-migration.yml
+          git commit -m "chore: remove one-shot migration workflow"
+          git push origin HEAD:main
