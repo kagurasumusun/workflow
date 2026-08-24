@@ -33,10 +33,20 @@ jobs:
     steps:
       - name: Checkout build platform and CE source
         shell: bash
+        env:
+          WINCE_REPO_PAT: ${{ secrets.WINCE_REPO_PAT }}
         run: |
           set -euo pipefail
-          git clone --depth 1 --branch main https://github.com/kagurasumusun/wince-build.git wince-build
-          git clone --depth 1 --branch main https://github.com/kagurasumusun/wince-source.git wince-source
+          test -n "$WINCE_REPO_PAT"
+          AUTH=$(printf '%s:%s' 'kagurasumusun' "$WINCE_REPO_PAT" | base64 -w0)
+          git -c "http.extraheader=Authorization: Basic ${AUTH}" \
+            clone --depth 1 --branch main \
+            https://github.com/kagurasumusun/wince-build.git wince-build
+          git -c "http.extraheader=Authorization: Basic ${AUTH}" \
+            clone --depth 1 --branch main \
+            https://github.com/kagurasumusun/wince-source.git wince-source
+          git -C wince-build remote set-url origin https://github.com/kagurasumusun/wince-build.git
+          git -C wince-source remote set-url origin https://github.com/kagurasumusun/wince-source.git
           git -C wince-build rev-parse HEAD | tee revisions.txt
           git -C wince-source rev-parse HEAD | tee -a revisions.txt
           test -d wince-source/ce600/PUBLIC
@@ -74,6 +84,13 @@ jobs:
           set -euo pipefail
           test -x build/wcefullbuild
           test -x build/petool
+          test -d include/wce/core
+          test -d include/wce/model
+          test -d include/wce/frontend
+          test -d include/wce/build
+          test -d include/wce/toolchain
+          test -d include/wce/sysgen
+          test -d include/wce/image
           test ! -d src/wce
           test ! -d scripts
           test ! -d config
