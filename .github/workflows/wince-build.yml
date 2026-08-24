@@ -32,11 +32,18 @@ jobs:
     steps:
       - name: Checkout wince-build
         shell: bash
+        env:
+          WINCE_BUILD_PAT: ${{ secrets.WINCE_REPO_PAT }}
         run: |
           set -euo pipefail
-          git clone --depth 1 --branch main https://github.com/kagurasumusun/wince-build.git wince-build
+          test -n "$WINCE_BUILD_PAT"
+          AUTH=$(printf '%s:%s' 'kagurasumusun' "$WINCE_BUILD_PAT" | base64 -w0)
+          git -c "http.extraheader=Authorization: Basic ${AUTH}" \
+            clone --depth 1 --branch main \
+            https://github.com/kagurasumusun/wince-build.git wince-build
           cd wince-build
           git submodule update --init --recursive
+          git remote set-url origin https://github.com/kagurasumusun/wince-build.git
           git rev-parse HEAD
           git submodule status
 
@@ -74,7 +81,15 @@ jobs:
           test -d src/image
           test -d src/bsp
           test -d src/sdk
-          test -d include
+          test -d include/wce/core
+          test -d include/wce/model
+          test -d include/wce/frontend
+          test -d include/wce/build
+          test -d include/wce/toolchain
+          test -d include/wce/sysgen
+          test -d include/wce/image
+          test -d include/wce/bsp
+          test -d include/wce/sdk
           test -d compat
           test -d tools/cli
           test -d tools/inspection
@@ -90,7 +105,6 @@ jobs:
           test ! -d scripts
           test ! -d external
           test ! -d engine
-          test ! -d .github/workflows
           test ! -f tools/wcebuild/main.cpp
           test ! -f tools/wcefullbuild/main.cpp
           test ! -f tools/wcesysgen/main.cpp
