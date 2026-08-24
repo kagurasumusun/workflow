@@ -69,7 +69,7 @@ jobs:
             local size
             local path
 
-            git diff --name-only -z -- ce600/ > "$CHANGE_FILE"
+            git diff --name-only -z --diff-filter=ACMR -- ce600/ > "$CHANGE_FILE"
             git ls-files -z --others --exclude-standard -- ce600/ >> "$CHANGE_FILE"
             sort -zu "$CHANGE_FILE" -o "$CHANGE_FILE"
 
@@ -106,7 +106,7 @@ jobs:
             done < "$CHANGE_FILE"
 
             if [ -s "$BATCH_FILE" ]; then
-              batch=$((batch + 1)
+              batch=$((batch + 1))
               git add --pathspec-from-file="$BATCH_FILE" --pathspec-file-nul
 
               if ! git diff --cached --quiet; then
