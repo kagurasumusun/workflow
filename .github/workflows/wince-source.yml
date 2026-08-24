@@ -27,7 +27,8 @@ jobs:
           set -euo pipefail
           test -n "$WINCE_REPO_PAT"
           rm -rf wince-source
-          git -c "http.extraheader=Authorization: Bearer ${WINCE_REPO_PAT}" \
+          AUTH=$(printf 'x-access-token:%s' "$WINCE_REPO_PAT" | base64 -w0)
+          git -c "http.extraheader=Authorization: Basic ${AUTH}" \
             clone --depth 1 --branch main \
             https://github.com/kagurasumusun/wince-source.git wince-source
           cd wince-source
@@ -87,4 +88,5 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git commit -m "Update full Windows CE 6.0 source tree"
-          git -c "http.extraheader=Authorization: Bearer ${WINCE_REPO_PAT}" push origin HEAD:main
+          AUTH=$(printf 'x-access-token:%s' "$WINCE_REPO_PAT" | base64 -w0)
+          git -c "http.extraheader=Authorization: Basic ${AUTH}" push origin HEAD:main
