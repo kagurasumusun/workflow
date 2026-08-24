@@ -34,19 +34,31 @@ jobs:
           cd wince-source
           python3 -m pip install --break-system-packages -r scripts/requirements.txt
 
-      - name: Download and extract CE6 media into wince-source/ce600
+      - name: Download, extract and push CE6 media incrementally
         working-directory: wince-source
         shell: bash
         env:
+          WINCE_REPO_PAT: ${{ secrets.WINCE_REPO_PAT }}
           IA_BASE: https://archive.org/download/windows-ce-6/en_windows_embedded_ce_6.0_dvd.iso
           IA_R2: https://archive.org/download/windows-ce-6/CE6R2.iso
           IA_R3: https://archive.org/download/windows-ce-6/CE6R3.iso
         run: |
           set -euo pipefail
-          rm -rf ce600
+
           mkdir -p "$RUNNER_TEMP/ce6" ce600
 
-          download_extract() {
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git config http.version HTTP/1.1
+          git config http.postBuffer 524288000
+          git config http.maxRequestBuffer 100M
+          git config pack.windowMemory 100m
+          git config pack.packSizeLimit 100m
+          git config pack.threads 2
+
+          AUTH=$(printf '%s:%s' 'kagurasumusun' "$WINCE_REPO_PAT" | base64 -w0)
+
+          download_extract_push() {
             local tag="$1"
             local url="$2"
             local iso="$RUNNER_TEMP/ce6/${tag}.iso"
@@ -70,43 +82,21 @@ jobs:
               -o "$GITHUB_WORKSPACE/wince-source/ce600"
 
             rm -f "$iso"
+
+            git add ce600/
+            git diff --cached --quiet && return 0
+            git commit -m "Import Windows CE 6.0 ${tag} source"
+
+            for attempt in 1 2 3; do
+              if git -c "http.extraheader=Authorization: Basic ${AUTH}" \
+                push origin HEAD:main; then
+                return 0
+              fi
+              [ "$attempt" -lt 3 ] && sleep $((attempt * 15))
+            done
+            return 1
           }
 
-          download_extract base "$IA_BASE"
-          download_extract r2 "$IA_R2"
-          download_extract r3 "$IA_R3"
-
-      - name: Commit and push ce600
-        working-directory: wince-source
-        shell: bash
-        env:
-          WINCE_REPO_PAT: ${{ secrets.WINCE_REPO_PAT }}
-        run: |
-          set -euo pipefail
-          test -n "$WINCE_REPO_PAT"
-          git add ce600/
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git commit -m "Update full Windows CE 6.0 source tree"
-
-          # Keep Git's pack small enough for a large source-only push without
-          # duplicating the full tree in runner storage. Use HTTP/1.1 for a
-          # stable long-running send-pack connection.
-          git config http.version HTTP/1.1
-          git config http.postBuffer 524288000
-          git config http.maxRequestBuffer 100M
-          git config pack.windowMemory 100m
-          git config pack.packSizeLimit 100m
-          git config pack.threads 2
-
-          AUTH=$(printf '%s:%s' 'kagurasumusun' "$WINCE_REPO_PAT" | base64 -w0)
-          for attempt in 1 2 3; do
-            if git -c "http.extraheader=Authorization: Basic ${AUTH}" \
-              push origin HEAD:main; then
-              exit 0
-            fi
-            if [ "$attempt" -lt 3 ]; then
-              sleep $((attempt * 15))
-            fi
-          done
-          exit 1
+          download_extract_push base "$IA_BASE"
+          download_extract_push r2 "$IA_R2"
+          download_extract_push r3 "$IA_R3"
