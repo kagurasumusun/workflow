@@ -50,11 +50,76 @@ jobs:
           git config http.version HTTP/1.1
           git config gc.auto 0
           git config maintenance.auto false
-          git config pack.windowMemory 100m
+          git config pack.windowMemory 64m
           git config pack.packSizeLimit 100m
           git config pack.threads 2
 
           AUTH=$(printf '%s:%s' 'kagurasumusun' "$WINCE_REPO_PAT" | base64 -w0)
+
+          # Keep every push comfortably below GitHub's 2 GiB push limit.
+          # This is only a transport/commit boundary; no source files are removed.
+          BATCH_LIMIT=$((700 * 1024 * 1024))
+          BATCH_FILE="$RUNNER_TEMP/ce6/batch-paths"
+
+          push_batches() {
+            local tag="$1"
+            local batch=0
+            local bytes=0
+            local size
+            local path
+
+            : > "$BATCH_FILE"
+
+            while IFS= read -r -d '' path; do
+              size=$(stat -c '%s' -- "$path")
+
+              if [ "$bytes" -gt 0 ] && [ $((bytes + size)) -gt "$BATCH_LIMIT" ]; then
+                batch=$((batch + 1))
+                git add --pathspec-from-file="$BATCH_FILE" --pathspec-file-nul
+
+                if ! git diff --cached --quiet; then
+                  git commit -m "Import Windows CE 6.0 ${tag} source batch ${batch}"
+
+                  for attempt in 1 2 3; do
+                    if git -c "http.extraheader=Authorization: Basic ${AUTH}" \
+                      push origin HEAD:main; then
+                      break
+                    fi
+                    if [ "$attempt" -eq 3 ]; then
+                      return 1
+                    fi
+                    sleep $((attempt * 15))
+                  done
+                fi
+
+                : > "$BATCH_FILE"
+                bytes=0
+              fi
+
+              printf '%s\0' "$path" >> "$BATCH_FILE"
+              bytes=$((bytes + size))
+            done < <(git ls-files -z --others --exclude-standard ce600/)
+
+            if [ -s "$BATCH_FILE" ]; then
+              batch=$((batch + 1))
+              git add --pathspec-from-file="$BATCH_FILE" --pathspec-file-nul
+
+              if ! git diff --cached --quiet; then
+                git commit -m "Import Windows CE 6.0 ${tag} source batch ${batch}"
+
+                for attempt in 1 2 3; do
+                  if git -c "http.extraheader=Authorization: Basic ${AUTH}" \
+                    push origin HEAD:main; then
+                    break
+                  fi
+                  if [ "$attempt" -eq 3 ]; then
+                    return 1
+                  fi
+                  sleep $((attempt * 15))
+                done
+              fi
+            fi
+          }
 
           download_extract_push() {
             local tag="$1"
@@ -80,22 +145,7 @@ jobs:
               -o "$GITHUB_WORKSPACE/wince-source/ce600"
 
             rm -f "$iso"
-
-            git add -A ce600/
-            if git diff --cached --quiet; then
-              return 0
-            fi
-
-            git commit -m "Import Windows CE 6.0 ${tag} source"
-
-            for attempt in 1 2 3; do
-              if git -c "http.extraheader=Authorization: Basic ${AUTH}" \
-                push origin HEAD:main; then
-                return 0
-              fi
-              [ "$attempt" -lt 3 ] && sleep $((attempt * 15))
-            done
-            return 1
+            push_batches "$tag"
           }
 
           download_extract_push base "$IA_BASE"
